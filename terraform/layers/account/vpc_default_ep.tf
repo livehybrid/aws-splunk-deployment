@@ -1,3 +1,6 @@
+# S3 gateway endpoint policy: reach the persistent SOK buckets (SmartStore, the
+# App-Framework apps bucket and the KV-store backups) over the endpoint, without
+# a NAT. Listing is allowed account-wide so the operator/CLIs can resolve them.
 data "aws_iam_policy_document" "vpce_s3_policy" {
   statement {
     sid     = "AllowAccessToKnownS3"
@@ -8,12 +11,16 @@ data "aws_iam_policy_document" "vpce_s3_policy" {
       type        = "*"
     }
 
-    resources = local.combined_s3_bucket_access
+    resources = [
+      aws_s3_bucket.smartstore.arn, "${aws_s3_bucket.smartstore.arn}/*",
+      aws_s3_bucket.apps.arn, "${aws_s3_bucket.apps.arn}/*",
+      aws_s3_bucket.kvbackup.arn, "${aws_s3_bucket.kvbackup.arn}/*",
+    ]
   }
 
   statement {
     sid     = "AllowListingOfMyBuckets"
-    actions = local.combined_s3_vpce_permissions
+    actions = ["s3:ListAllMyBuckets", "s3:GetBucketLocation", "s3:ListBucket"]
     principals {
       identifiers = ["*"]
       type        = "*"

@@ -21,31 +21,6 @@ data "aws_route53_zone" "public-splunk" {
   name  = var.dns_base_splunk_domain
 }
 
-resource "aws_route53_zone" "public-inputs" {
-  count = var.enable_splunk_forwarder
-  name  = "inputs.${var.dns_base_splunk_domain}"
-
-  tags = {
-    environment = var.environment
-    project     = "splunk"
-  }
-}
-
-resource "aws_route53_record" "public-inputs" {
-  count   = var.enable_splunk_forwarder
-  zone_id = local.dns["public-splunk"]["zone_id"]
-  name    = "inputs.${var.dns_base_splunk_domain}"
-  type    = "NS"
-  ttl     = 30
-
-  records = [
-    aws_route53_zone.public-inputs[0].name_servers[0],
-    aws_route53_zone.public-inputs[0].name_servers[1],
-    aws_route53_zone.public-inputs[0].name_servers[2],
-    aws_route53_zone.public-inputs[0].name_servers[3],
-  ]
-}
-
 resource "aws_route53_zone" "private" {
   name = "${var.environment}.splunk.internal"
 

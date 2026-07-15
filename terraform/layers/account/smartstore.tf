@@ -1,34 +1,20 @@
 ###############################################################################
 # SmartStore bucket + KMS key — the warm/cold tier for the SOK indexers.
 #
-# Faithfully mirrors the account layer's SmartStore resources (bucket naming,
-# SSE-KMS, private ACLs, tiered lifecycle, KMS rotation) so the same discovery
-# conventions and the same IRSA/KMS grants work identically to prod:
 #   bucket: livehybrid-splunk-<env>-splunk-smartstore-<env>
 #   alias:  alias/splunk-smartstore-<env>-key
 # The sok layer's IRSA role (irsa.tf) grants S3 + kms:Decrypt/GenerateDataKey on
 # exactly these ARNs; the ClusterManager CR points its remote volume here.
+# Persistent: this lives in the account layer, never part of the nightly
+# eks/sok teardown, so indexed data survives every rebuild.
 ###############################################################################
 
-data "aws_caller_identity" "current" {}
-
-# When this layer does NOT create the key (prod), the apps/kvbackup buckets
-# still encrypt with the workspace SmartStore key — discover the account-layer
-# one by its alias.
-data "aws_kms_alias" "smartstore_existing" {
-  count = var.sok_foundation_create_smartstore ? 0 : 1
-  name  = "alias/splunk-smartstore-${var.environment}-key"
-}
-
 locals {
-  account_name = "livehybrid-splunk-${var.environment}"
-  bucket_name  = "${local.account_name}-splunk-smartstore-${var.environment}"
-
-  smartstore_kms_arn = var.sok_foundation_create_smartstore ? aws_kms_key.smartstore[0].arn : data.aws_kms_alias.smartstore_existing[0].target_key_arn
+  smartstore_bucket_name = "${local.account_name}-splunk-smartstore-${var.environment}"
+  smartstore_kms_arn     = aws_kms_key.smartstore.arn
 }
 
 resource "aws_kms_key" "smartstore" {
-  count                   = var.sok_foundation_create_smartstore ? 1 : 0
   deletion_window_in_days = 7
   description             = "Splunk SmartStore (${var.environment}) bucket encryption key"
   enable_key_rotation     = true
@@ -53,7 +39,7 @@ resource "aws_kms_key" "smartstore" {
     {
       "Sid": "Enable IAM User Permissions",
       "Effect": "Allow",
-      "Principal": { "AWS": ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"] },
+      "Principal": { "AWS": ["arn:aws:iam::${local.account_id}:root"] },
       "Action": "kms:*",
       "Resource": "*"
     }
@@ -63,33 +49,29 @@ POLICY
 }
 
 resource "aws_kms_alias" "smartstore" {
-  count         = var.sok_foundation_create_smartstore ? 1 : 0
   name          = "alias/splunk-smartstore-${var.environment}-key"
-  target_key_id = aws_kms_key.smartstore[0].id
+  target_key_id = aws_kms_key.smartstore.id
 }
 
 module "s3_policy_smartstore" {
-  count            = var.sok_foundation_create_smartstore ? 1 : 0
   source           = "../../modules/s3_bucket_policy"
-  bucket_name      = local.bucket_name
+  bucket_name      = local.smartstore_bucket_name
   encrypted_bucket = true
   required_kms_arn = local.smartstore_kms_arn
   encryption_type  = "aws:kms"
 }
 
 resource "aws_s3_bucket" "smartstore" {
-  count  = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket = local.bucket_name
+  bucket = local.smartstore_bucket_name
 
   tags = {
     project     = "splunk"
-    Name        = local.bucket_name
+    Name        = local.smartstore_bucket_name
     Environment = var.environment
   }
 
   # Source of truth for every byte of indexed data — never let a terraform
-  # destroy take it (the KMS key already carries this guard; the bucket needs it
-  # too). The foundation layer is persistent and out of the nightly teardown.
+  # destroy take it.
   lifecycle {
     prevent_destroy = true
   }
@@ -99,16 +81,14 @@ resource "aws_s3_bucket" "smartstore" {
 # immutable bucket files, so churn is low; noncurrent versions expire after 30d
 # (lifecycle below) to bound cost.
 resource "aws_s3_bucket_versioning" "smartstore" {
-  count  = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket = aws_s3_bucket.smartstore[0].id
+  bucket = aws_s3_bucket.smartstore.id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_public_access_block" "smartstore" {
-  count                   = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket                  = aws_s3_bucket.smartstore[0].id
+  bucket                  = aws_s3_bucket.smartstore.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -116,8 +96,7 @@ resource "aws_s3_bucket_public_access_block" "smartstore" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "smartstore" {
-  count  = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket = aws_s3_bucket.smartstore[0].id
+  bucket = aws_s3_bucket.smartstore.id
   rule {
     apply_server_side_encryption_by_default {
       kms_master_key_id = local.smartstore_kms_arn
@@ -127,9 +106,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "smartstore" {
 }
 
 resource "aws_s3_bucket_policy" "smartstore" {
-  count  = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket = aws_s3_bucket.smartstore[0].id
-  policy = module.s3_policy_smartstore[0].json
+  bucket = aws_s3_bucket.smartstore.id
+  policy = module.s3_policy_smartstore.json
 }
 
 # Tiered lifecycle: recent buckets on Standard, INTELLIGENT_TIERING after 30d so
@@ -137,8 +115,7 @@ resource "aws_s3_bucket_policy" "smartstore" {
 # multipart uploads (SmartStore uploads are multipart) are aborted after 3 days
 # so they don't linger invisibly and bill forever.
 resource "aws_s3_bucket_lifecycle_configuration" "smartstore" {
-  count  = var.sok_foundation_create_smartstore ? 1 : 0
-  bucket = aws_s3_bucket.smartstore[0].id
+  bucket = aws_s3_bucket.smartstore.id
 
   rule {
     id     = "tier-after-30d"
