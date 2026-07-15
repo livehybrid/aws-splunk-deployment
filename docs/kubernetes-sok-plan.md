@@ -1,5 +1,14 @@
 # SOK implementation plan (agent handoff)
 
+!!! note "Historical build record"
+    This is the phase-by-phase plan that built the SOK estate, written while EC2
+    and SOK still co-existed behind a `deployment_model` toggle. The estate is
+    now **SOK-only**: the EC2 model (the `cluster` layer, Packer, the toggle and
+    its guards) is removed, and the former persistent `sok-foundation` layer is
+    merged into the `account` layer. The EC2 and toggle steps below are the
+    build history, not current architecture — the [overview](kubernetes-sok-overview.md)
+    holds the four-layer as-built model.
+
 Read [the design study](kubernetes-sok.md) first — this
 plan assumes its findings and does not re-argue them. Every caveat marked
 ⚠ was verified against primary sources in June/July 2026 (and this plan was
@@ -17,7 +26,7 @@ citations first — the K8s↔Splunk version coupling below is strict.
 ## Implementation status
 
 K1–K5 built and **verified on dev**, then torn down per the cost gate (the
-persistent `sok-foundation` is kept). Highlights and the deltas from this plan:
+persistent data layer is kept). Highlights and the deltas from this plan:
 
 - **K1–K3 ✅ verified:** cluster + operator up, 11 CRDs, RF/SF met, ingest +
   search, and **SmartStore SSE-KMS via IRSA end-to-end** (S3 objects encrypted
@@ -26,13 +35,13 @@ persistent `sok-foundation` is kept). Highlights and the deltas from this plan:
   targets, `sok-health.sh`, sok-start/stop/checks workflows, infracost); the
   nightly-cycle-×3 proof is CI work.
 - **Layer deltas from the plan** (the as-built layer model is now owned by the
-  [overview](kubernetes-sok-overview.md#the-architecture-six-terraform-layers)):
+  [overview](kubernetes-sok-overview.md#the-architecture-four-terraform-layers)):
   the operator + CRDs live in the **`sok`** layer, not `eks` — `alekc/kubectl`
   configures eagerly at plan and cannot run in the same apply that creates the
   cluster, so it must sit where the provider host is a concrete remote-state
-  value. `eks` is now pure AWS infra. A new persistent **`sok-foundation`**
-  layer holds the SmartStore + apps buckets + KMS (dev shares prod's account;
-  the account layer can't apply twice).
+  value. `eks` is now pure AWS infra. The persistent SmartStore + apps +
+  KV-backup buckets + KMS live in the **`account`** layer (originally split into
+  a separate `sok-foundation` layer, since merged back into `account`).
 - **App Framework spec field is `appRepo`** (v4), not `appFrameworkConfig`
   (older name — the v4 CRD prunes it silently).
 
@@ -106,12 +115,9 @@ default to:
   (~$2.40/day control plane + node hours), suppress the nightly stop for
   that window, and record it in the [LLD workbook](LLD-workbook.md).
 - **One model per workspace, ever.** A SmartStore bucket must only ever
-  have one live cluster manager (the toggle's exclusivity guard — see the
-  [overview](kubernetes-sok-overview.md#the-toggle-one-flag-picks-the-build)).
-  Never apply the `eks`/`sok` layers for a workspace while that workspace's
-  `cluster` layer has Splunk core instances running (CM/indexers/SH), and
-  vice versa. Phase K1 adds an automated guard; until it exists, check by
-  hand (`make status env=<env>`).
+  have one live cluster manager (see the
+  [overview](kubernetes-sok-overview.md#the-operator-model)). Never point a
+  second cluster manager at a workspace's SmartStore bucket.
 - **Prod is out of bounds** for applies unless the user explicitly asks.
   Dev-first is the standing plan. Phase K7 (prod) is design-complete but
   execution-gated on the user.
@@ -119,10 +125,9 @@ default to:
   over HTTPS with the PAT from Secrets Manager `/git/login`
   (`aws secretsmanager get-secret-value --secret-id /git/login` — the raw
   SecretString *is* the token; grep it out of any output). Commits are
-  unsigned and carry **no** AI/Claude attribution (repo convention — same as
-  the [apps-repo handoff](apps-repo-handoff.md)). Work lands as ordinary
-  commits on `master` (no long-lived branch), each phase gate green before
-  the next starts.
+  unsigned and carry **no** AI/Claude attribution (repo convention). Work lands
+  as ordinary commits on `master` (no long-lived branch), each phase gate green
+  before the next starts.
 - **Admin-user divergence (decided):** the EC2 estate's admin is
   `splunkadmin`, but ⚠ the operator authenticates as the **literal user
   `admin`** — its REST client and its bundle-push exec both hardcode

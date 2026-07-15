@@ -1,9 +1,9 @@
 # SOK operations runbook
 
-Day-2 operations for the Splunk Operator for Kubernetes (SOK) build
-(`deployment_model = sok`). Companion to the [overview](kubernetes-sok-overview.md)
-(what it is) and the [review](reviews/index.md) (what's still open). Everything
-here assumes `make kubeconfig env=<env>` has pointed `kubectl` at the cluster.
+Day-2 operations for the Splunk Operator for Kubernetes (SOK) build. Companion
+to the [overview](kubernetes-sok-overview.md) (what it is) and the
+[review](reviews/index.md) (what's still open). Everything here assumes
+`make kubeconfig env=<env>` has pointed `kubectl` at the cluster.
 
 ## Lifecycle at a glance
 
@@ -139,22 +139,14 @@ updates; the one-at-a-time property comes from the StatefulSets themselves.
 | **AZ 2a lost** | **CM down → search outage**; site-2 indexers unaffected | restore 2a capacity; CM reschedules; then `make sok-health` |
 | Whole cluster | none to data (S3 is source of truth) | `SOK START` rebuilds; `make sok-kvstore-restore` re-seats KV |
 
-!!! warning "Restarting the EC2 estate after a prod SOK run"
-    Once prod SOK has attached to the prod SmartStore bucket, 
-    the bucket carries the SOK generation's GUIDs.
-    The EC2 CM's next cold boot will likely hit the same RF/SF fixup stall SOK
-    hit — run **`./scripts/rf-remediate.sh prod`** (the EC2/SSM variant) after
-    the estate boots; it rolling-restarts the peers only when the stall
-    signature is present. The SOK-side twin is `make sok-rf-remediate`.
-
 SHC members should be **spread across AZs** (topology-spread) so a single-AZ loss
 never takes a majority — tracked as a prod-profile item; dev runs a single
 Standalone SH so it does not apply there.
 
 ## IP capacity (shared /26 subnets)
 
-The cluster borrows the prod VPC's `default-{a,b,c}` subnets — **/26s, ~59
-usable IPs each, shared with the prod EC2 estate**. The vpc-cni addon is tuned
+The cluster borrows the shared VPC's `default-{a,b,c}` subnets — **/26s, ~59
+usable IPs each (dev and prod share one account and VPC)**. The vpc-cni addon is tuned
 (`WARM_IP_TARGET=4`, `MINIMUM_IP_TARGET=8`) so nodes don't hoard a full ENI's
 worth of warm IPs (15 on t3.xlarge). If a future shape's pod density approaches
 subnet capacity anyway, the escalation path is a **secondary VPC CIDR + CNI
@@ -238,6 +230,4 @@ layer — one OOMing search must not SIGKILL splunkd under cgroupsv2), and the
 The **full lesson-by-lesson adoption matrix (27 rows, DONE/queued) is the single
 source of truth in [Community lessons](kubernetes-sok-community-lessons.md)** —
 the still-queued items (MC-Apply automation, the #893 app-deletion drift check,
-search memory guardrails, plaintext-9997 verification) are tracked as task #55
-with the executable spec in
-[Handoff, lessons remainder](handoff-sok-lessons-remainder.md).
+search memory guardrails, plaintext-9997 verification) are tracked as task #55.

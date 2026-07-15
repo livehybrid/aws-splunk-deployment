@@ -42,22 +42,19 @@ CR skeleton (the M3 topology as multisite CRs, with the replication factors and
 `constrain_singlesite_buckets` wiring) lives in the
 [design study](kubernetes-sok.md#the-m3-topology-as-sok-custom-resources).
 
-## The architecture — six Terraform layers
+## The architecture — four Terraform layers
 
-Everything is Terraform, split into layers that each hold their own state. Two
-are shared with the EC2 build; the SOK build adds three more.
+Everything is Terraform, split into layers that each hold their own state.
 
-| Layer | Purpose | Model | Lifecycle |
-|-------|---------|-------|-----------|
-| `account` | VPC, S3 gateway endpoint (+ bucket allowlist), KMS, CloudTrail, IAM baseline | shared | stable |
-| `iam` | Account-wide IAM roles & policies | shared | stable |
-| `cluster` | ASGs + Splunk bootstrap on EC2 (the original build) | ec2 | — |
-| `sok-foundation` | SmartStore / apps / kv-backup S3 buckets + KMS key (`prevent_destroy`) | sok | **persistent** |
-| `eks` | EKS 1.34 cluster, node groups, gp3 storage classes, node-local DNS | sok | **ephemeral** |
-| `sok` | Operator (Helm) + CRDs, all Splunk CRs, IRSA roles, defaults ConfigMaps, PDBs, KV-backup CronJob | sok | **ephemeral** |
+| Layer | Purpose | Lifecycle |
+|-------|---------|-----------|
+| `account` | VPC, S3 gateway endpoint (+ bucket allowlist), KMS, the SmartStore / apps / KV-backup S3 buckets (`prevent_destroy`), the HEC-token secret | **persistent** |
+| `iam` | The CI (GitHub Actions) role & its policies | stable |
+| `eks` | EKS 1.34 cluster, node groups, gp3 storage classes, node-local DNS | **ephemeral** |
+| `sok` | Operator (Helm) + CRDs, all Splunk CRs, IRSA roles, defaults ConfigMaps, PDBs, KV-backup CronJob | **ephemeral** |
 
 !!! note "The persistent / ephemeral split is the whole trick"
-    `sok-foundation` holds the data (S3 + KMS) and is never torn down. `eks` +
+    The `account` layer holds the data (S3 + KMS) and is never torn down. `eks` +
     `sok` are pure compute — we destroy and rebuild them freely, because nothing
     there is precious. That is what lets dev rebuild nightly, and lets prod cut
     over without a data migration.
@@ -72,7 +69,7 @@ flowchart TB
         idx["IndexerCluster ×2 sites"]
         shc["SearchHeadCluster"]
     end
-    subgraph persist ["sok-foundation — persistent (prevent_destroy)"]
+    subgraph persist ["account — persistent (prevent_destroy)"]
         s3s[("SmartStore S3")]
         s3a[("Apps S3")]
         s3k[("KV-backup S3")]
@@ -85,19 +82,10 @@ flowchart TB
     s3k -. "encrypted by" .-> kms
 ```
 
-## The toggle — one flag picks the build
-
-A single variable in each workspace's tfvars decides which Splunk core runs:
-
-```hcl
-deployment_model = "ec2"   # cluster layer: ASGs + bootstrap (default; prod today)
-deployment_model = "sok"   # eks + sok layers: Splunk Operator on EKS (dev today)
-```
-
-!!! warning "The two builds are mutually exclusive"
-    Both share one SmartStore bucket, and a SmartStore bucket may only ever have
-    **one live cluster manager**. Guards in both paths enforce this — you cannot
-    accidentally point two cluster managers at the same data.
+!!! warning "One live cluster manager per bucket"
+    A SmartStore bucket may only ever have **one live cluster manager**. Keep a
+    single active `sok` deployment pointed at a workspace's SmartStore bucket —
+    never stand up a second cluster manager against the same data.
 
 ## Key mechanisms
 
@@ -118,8 +106,8 @@ Three GitHub workflows drive the lifecycle. Start is `terraform apply`; stop is
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| **SOK START** | manual (dev \| prod) | Applies foundation → eks → sok: stands up EKS, the operator and the CRs, then bootstraps the topology. |
-| **SOK STOP** | manual + nightly 21:30 UTC (dev) | Rolls hot buckets, destroys `sok` then `eks` (PVCs → EBS reclaimed in order); **keeps the foundation**. |
+| **SOK START** | manual (dev \| prod) | Applies eks → sok: stands up EKS, the operator and the CRs, then bootstraps the topology (the persistent `account` layer is already in place). |
+| **SOK STOP** | manual + nightly 21:30 UTC (dev) | Rolls hot buckets, destroys `sok` then `eks` (PVCs → EBS reclaimed in order); **keeps the `account` layer**. |
 | **SOK CHECKS** | manual + auto after START | Verifies the cluster formed and is serving. |
 
 ```mermaid
@@ -132,33 +120,28 @@ flowchart LR
 
 !!! warning "Nightly auto-stop (dev)"
     Dev is destroyed every night at 21:30 UTC as a cost guard — ~$0 overnight,
-    ~$1–2/mo at rest (just the foundation KMS). Anything not in the foundation
-    buckets does not survive the night.
+    ~$1–2/mo at rest (just the persistent `account` KMS). Anything not in the
+    `account` buckets does not survive the night.
 
-Prod, once cut over, runs **always-on** — realistically **≈ $750/mo all-in** on
-the staged t3 shape (3× t3.xlarge ≈ $414 + EKS control plane $73 + gp3 PVCs
-≈ $225 + NLBs ≈ $37; S3 rides the free VPC gateway endpoint, so no NAT and ~$0
-SmartStore transfer). Earlier "$490–570/mo" figures were wrong — they omitted
-the ~$225/mo of EBS ([review NFR-9](reviews/non-functional.md)). Prod runs
-always-on because it can't park without dropping live ingest.
+Prod runs **always-on** — realistically **≈ $750/mo all-in** on the staged t3
+shape (3× t3.xlarge ≈ $414 + EKS control plane $73 + gp3 PVCs ≈ $225 + NLBs
+≈ $37; S3 rides the free VPC gateway endpoint, so no NAT and ~$0 SmartStore
+transfer). Earlier "$490–570/mo" figures were wrong — they omitted the ~$225/mo
+of EBS ([review NFR-9](reviews/non-functional.md)). Prod runs always-on because
+it can't park without dropping live ingest.
 
 **SOK has two rest states, not one.** Its nightly cost guard is a full
 `terraform destroy` of the compute (`sok` + `eks`, control plane included), so
-at rest it falls to the **destroyed floor ≈ $1–2/mo** (persistent
-`sok-foundation` S3 + KMS only). It does **not** sit on a "$73/mo parked"
-floor: that control-plane charge only applies to the unvalidated *pause* model
-(nodes → 0, cluster kept), which this build deliberately avoids. **The decision
-criterion is park-capability, not raw compute.** The EC2 estate compares at
-≈ $833/mo always-on *but parks nightly today* to ≈ $8/mo with no control-plane
-charge; SOK cannot cheaply park (any live EKS cluster bills $73/mo standard,
-$438/mo in extended support after 2026-12-02), so its only cheap rest state is
-total destroy. That asymmetry — not the ~$750 vs ~$833 always-on numbers — is
-why prod stays on EC2 until the cutover. Sizing is deliberate, not an unknown:
-**prod stays on the small t3 shape for now** — the current phase validates the
-*build-out process* (lifecycle, rebuild determinism, DR mechanics), not
-performance. The design's K7 performance profile (m6i.2xlarge indexers, compute
-alone past $1,300/mo) is a separate, later decision taken against real
-ingest/search load.
+at rest it falls to the **destroyed floor ≈ $1–2/mo** (persistent `account`
+S3 + KMS only). It does **not** sit on a "$73/mo parked" floor: that
+control-plane charge only applies to the unvalidated *pause* model (nodes → 0,
+cluster kept), which this build deliberately avoids. Any live EKS cluster bills
+$73/mo standard, $438/mo in extended support after 2026-12-02, so the only cheap
+rest state is total destroy. Sizing is deliberate, not an unknown: **prod stays
+on the small t3 shape for now** — the current phase validates the *build-out
+process* (lifecycle, rebuild determinism, DR mechanics), not performance. The
+design's K7 performance profile (m6i.2xlarge indexers, compute alone past
+$1,300/mo) is a separate, later decision taken against real ingest/search load.
 
 ## Accessing Splunk Web
 
@@ -168,7 +151,7 @@ forward — no public surface:
 ```bash
 make kubeconfig env=dev                                                   # point kubectl at the cluster
 kubectl port-forward -n splunk svc/splunk-sh-standalone-service 8000:8000  # → http://localhost:8000
-# login: admin   (NB: 'admin' inside SOK, not the estate's 'splunkadmin')
+# login: admin   (NB: SOK's admin user is 'admin', not 'splunkadmin')
 # dev password (env-scoped, SEC-1 — prod uses /monitoring/splunk/password):
 aws secretsmanager get-secret-value --secret-id /dev/splunk/password --query SecretString --output text
 ```
@@ -186,7 +169,7 @@ components you select, each getting a real HTTPS URL. It is **off by default**.
 | `deployer` | same pattern | SHC shapes only |
 | **HEC** (`sok_hec_external_enabled`) | `<first-label>-hec.<zone>` | data ingest, not a UI — own flag, routes :443 → indexer HTTPS :8088 |
 | indexers (web) | — | **never exposable** (splunkweb is disabled on peers) |
-| DS | — | no Deployment Server exists under SOK (the edge tier stays EC2) |
+| DS | — | no Deployment Server CRD exists under SOK |
 
 Adding/removing a component only edits ALB rules + DNS — **no pod restarts**
 (the proxy web.conf rides every UI CR whenever the flag is on).
@@ -215,8 +198,12 @@ Requires the AWS Load Balancer Controller (installed by the eks layer). The shar
 prod subnets carry no `kubernetes.io/role/elb` tag (tagging them would perturb the
 prod estate's own LB discovery), so the public subnets are passed to the controller
 explicitly. The ALB is provisioned *after* the Ingress, so its DNS name is unknown
-at apply time — `scripts/sok-web-dns.sh` (a `null_resource`) waits for it and
-UPSERTs the CNAME, and DELETEs it on destroy.
+at apply time — the Ingress is declared as a `kubernetes_manifest` resource with a
+`wait { fields }` block on `status.loadBalancer.ingress[0].hostname`, so Terraform
+blocks until the controller has assigned the ALB hostname. That hostname then
+feeds native `aws_route53_record` resources (the CNAMEs), which Terraform creates
+and destroys with the rest of the layer — no `null_resource`, no local-exec, no
+poll script.
 
 When the flag is on, every UI-serving CR's `web.conf` gets `tools.proxy.on = true`
 and `tools.proxy.local = Host` so Splunk emits `https://` redirects on the external
@@ -249,6 +236,6 @@ keeps working either way.
 
 !!! warning "No stable URL across nightly rebuilds"
     The ALB lives in the nightly-destroyed `sok` layer, so each rebuild mints a
-    **new** ALB and the CNAME is re-pointed on the next apply. For a URL that
-    survives rebuilds, add the **external-dns** addon (follow-up) rather than
-    relying on the script.
+    **new** ALB and the CNAME is re-pointed by the next apply's
+    `aws_route53_record`. For a URL that survives rebuilds, add the
+    **external-dns** addon (follow-up).
