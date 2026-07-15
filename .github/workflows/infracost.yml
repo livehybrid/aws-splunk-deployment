@@ -52,7 +52,7 @@ jobs:
             --format=json \
             --out-file=/tmp/infracost/result.json
 
-      - name: Run Infracost (breakdown — no baseline yet)
+      - name: Run Infracost (breakdown, no baseline yet)
         if: steps.baseline.outputs.found != 'true'
         run: |
           infracost breakdown \

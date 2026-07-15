@@ -2,7 +2,7 @@
 # NFR-2: CPU-credit-balance alarm for the burstable SOK nodes.
 #
 # The SOK node groups run on burstable t3 instances (dev: t3.xlarge, prod:
-# t3.large — deliberately small for the build-out test). Burstable instances
+# t3.large, deliberately small for the build-out test). Burstable instances
 # earn CPU credits at a baseline rate and spend them to burst above baseline;
 # once CPUCreditBalance hits zero they are throttled to baseline (Unlimited
 # mode instead bills for surplus credits). For splunkd this surfaces as sudden,
@@ -12,7 +12,7 @@
 # AWS/EC2 CPUCreditBalance is published ONLY per instance (dimension
 # InstanceId). It has no AutoScalingGroupName dimension, and a CloudWatch SEARCH
 # SearchTerm matches tokens from the metric SCHEMA (namespace / metric name /
-# dimension names+values) — NOT from EC2 tags or ASG membership — so an ASG name
+# dimension names+values), NOT from EC2 tags or ASG membership, so an ASG name
 # cannot scope this metric via SEARCH. The rebuild-stable, correctly-scoped
 # approach is therefore to resolve the ASG's current instance IDs (data source
 # below) and build a metric-math alarm that takes the MIN of CPUCreditBalance
@@ -32,7 +32,7 @@ locals {
   node_asg_names = data.terraform_remote_state.eks.outputs.node_group_autoscaling_group_names
 }
 
-# Current instance IDs per ASG (re-resolved each apply — see header). The
+# Current instance IDs per ASG (re-resolved each apply, see header). The
 # aws_autoscaling_group data source does NOT expose instance IDs, so resolve them
 # with aws_instances filtered on the ASG's auto-propagated groupName tag.
 data "aws_instances" "sok_nodes" {

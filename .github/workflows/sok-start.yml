@@ -1,12 +1,12 @@
 ###############################################################################
-# SOK START — bring up the eks + sok layers for a workspace (deployment_model
+# SOK START, bring up the eks + sok layers for a workspace (deployment_model
 # = sok). Applies eks (cluster/nodes/storage/ALB) then sok (operator/CRDs/CRs).
 #
 # The account layer (SmartStore + apps buckets + HEC secret) is PERSISTENT and
-# assumed already applied — it is never part of this start/stop cycle.
+# assumed already applied, it is never part of this start/stop cycle.
 #
 # GitHub-hosted runners aren't in trusted_cidrs, so the runner's egress IP is
-# passed to eks as eks_public_access_cidrs (appended to trusted_cidrs) — the
+# passed to eks as eks_public_access_cidrs (appended to trusted_cidrs), the
 # same apply that creates the cluster then reaches the API to make the
 # StorageClasses + ALB controller, and the sok apply reaches it for the CRs.
 # The nightly SOK STOP removes the whole cluster, so there is no CIDR to clean.
@@ -54,7 +54,7 @@ jobs:
 
       - name: Prod confirmation gate + overlay check
         run: |
-          # DEP-5: a prod dispatch must be deliberate — require confirm=prod.
+          # DEP-5: a prod dispatch must be deliberate, require confirm=prod.
           if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
             echo "::error ::refusing to start PROD without confirm=prod"; exit 1; fi
           # Overlay must exist before we burn 10 minutes of applies.
@@ -105,7 +105,7 @@ jobs:
         working-directory: terraform/layers/sok
         run: |
           # The web-ingress now uses kubernetes_manifest with a wait{fields} on the
-          # ALB hostname (native provider, exec-token auth) — no raw-kubectl poller.
+          # ALB hostname (native provider, exec-token auth), no raw-kubectl poller.
           # Refresh the kubeconfig anyway so any post-apply kubectl (checks) works.
           aws eks update-kubeconfig --name splunk-sok-$TARGET_ENV --region "$AWS_REGION"
           terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
@@ -115,7 +115,7 @@ jobs:
 
       - name: Drift check (post-apply plans must be empty)
         run: |
-          # DEP-11: the stop/start model assumes a deterministic rebuild — a
+          # DEP-11: the stop/start model assumes a deterministic rebuild, a
           # non-empty plan straight after apply means config/reality drift
           # (flapping data source, out-of-band edit, floating version). Warn,
           # don't fail: the cluster is up and CHECKS validates health.
@@ -128,7 +128,7 @@ jobs:
             rc=$?
             case $rc in
               0) echo "$layer: no drift" ;;
-              2) echo "::warning ::$layer plan is NOT empty immediately after apply — investigate drift" ;;
+              2) echo "::warning ::$layer plan is NOT empty immediately after apply, investigate drift" ;;
               *) echo "::warning ::$layer drift-check plan errored (rc=$rc)" ;;
             esac
           done
@@ -145,10 +145,10 @@ jobs:
         run: |
           # #54: the workflow_run trigger on sok-checks.yml never fired after the
           # first prod START (event undelivered; registered+active, both files on
-          # master). Dispatch explicitly with the env input — deterministic and
+          # master). Dispatch explicitly with the env input, deterministic and
           # self-documenting; workflow_run stays as a belt-and-braces backup.
           gh workflow run "SOK CHECKS (health)" --repo "$GITHUB_REPOSITORY" -f env="$TARGET_ENV" \
-            || echo "::warning ::could not dispatch SOK CHECKS — run it manually (env=$TARGET_ENV)"
+            || echo "::warning ::could not dispatch SOK CHECKS, run it manually (env=$TARGET_ENV)"
 
       - name: Notify Slack on failure
         if: failure()
@@ -157,7 +157,7 @@ jobs:
         run: |
           # OPS-4: lifecycle failures must not rely on someone reading the Actions
           # tab. No-op until the SLACK_WEBHOOK_URL secret is set.
-          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set, skipping notify"; exit 0; }
           curl -s -m 10 -X POST -H 'Content-Type: application/json' \
-            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\`, ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "$WEBHOOK" || true

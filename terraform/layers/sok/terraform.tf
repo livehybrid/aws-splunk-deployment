@@ -1,10 +1,10 @@
 ###############################################################################
-# SOK layer — the Splunk half of deployment_model = "sok": global secret,
+# SOK layer, the Splunk half of deployment_model = "sok": global secret,
 # IRSA, defaults ConfigMaps and the Splunk Enterprise custom resources.
 #
 # Own state key (NEVER reuse another layer's): sok/terraform.tfstate.
 # Reads the eks layer's outputs; AWS foundation values (SmartStore bucket,
-# KMS key) are discovered by naming convention — see the eks layer header.
+# KMS key) are discovered by naming convention, see the eks layer header.
 #
 # Nightly stop destroys THIS layer first (CRs, then PVCs while the CSI
 # driver still exists), then the eks layer. PVC reclaimPolicy is Delete and

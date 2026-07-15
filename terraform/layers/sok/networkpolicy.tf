@@ -1,6 +1,6 @@
 ###############################################################################
 # SEC-5: egress isolation for the splunk namespace. Dev SOK pods live INSIDE
-# the prod VPC — without policies they can reach the prod EC2 estate's
+# the prod VPC, without policies they can reach the prod EC2 estate's
 # LM:8089 / HF:9997 / mgmt ports. This egress-only policy allowlists what
 # Splunk actually needs and cuts everything else VPC-internal:
 #   - anything within the namespace (clustering, bundles, dist search, exec),
@@ -9,7 +9,7 @@
 # Prod-internal Splunk ports (8089/9997/8000/8088 on EC2 instances) match no
 # rule -> dropped. Ingress is left default-allow (ALB ip-targets, kubelet
 # probes, operator). ENFORCEMENT requires the vpc-cni network-policy agent
-# (enableNetworkPolicy in the eks layer) — without it this object is inert.
+# (enableNetworkPolicy in the eks layer), without it this object is inert.
 ###############################################################################
 
 resource "kubernetes_network_policy_v1" "splunk_egress" {

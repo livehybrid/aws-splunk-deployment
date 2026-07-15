@@ -1,7 +1,7 @@
 # Build the MkDocs site and publish to GitHub Pages.
 #
 # While this repo is PRIVATE the workflow is manual-only: GitHub Pages on
-# private repos is either unavailable (Free) or public-anyway (Pro) —
+# private repos is either unavailable (Free) or public-anyway (Pro),
 # access-controlled Pages needs Enterprise Cloud. When the repo goes public:
 #   1. Settings -> Pages -> Source = "GitHub Actions"
 #   2. Uncomment the push trigger below.

@@ -13,7 +13,7 @@ provider "aws" {
   }
 }
 
-# Cross-region provider alias for legacy ses-storage etc. — no longer in use
+# Cross-region provider alias for legacy ses-storage etc., no longer in use
 # but kept to avoid breaking any vestigial provider references.
 provider "aws" {
   alias   = "eu-west-1"

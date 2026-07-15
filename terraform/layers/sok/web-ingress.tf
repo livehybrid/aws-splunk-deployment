@@ -1,12 +1,12 @@
 ###############################################################################
 # External Splunk Web access (OPT-IN; gated on var.sok_web_external_enabled).
 #
-# The default access path to Splunk Web is `kubectl port-forward` — every Splunk
+# The default access path to Splunk Web is `kubectl port-forward`, every Splunk
 # service is ClusterIP. This file adds ONE internet-facing ALB Ingress with
 # host-based routing in front of the UI-serving components selected in
 # var.sok_web_external_components (sh/cm/lm/mc, + deployer on SHC shapes), so
 # each gets a real HTTPS URL (demos, or where port-forward is impractical).
-# Indexers are never exposable — splunkweb is disabled on peers by design.
+# Indexers are never exposable, splunkweb is disabled on peers by design.
 #
 # Hostnames: sh keeps var.sok_web_external_hostname; every other component gets
 # <first-label-of-that-hostname>-<component>.<zone> (single label under the
@@ -18,11 +18,11 @@
 # the prod estate's own LB auto-discovery), so the public subnets are passed to
 # the controller EXPLICITLY via the `subnets` annotation.
 #
-# ⚠ Blast radius: this exposes full-admin UIs (dev's credential is env-scoped —
-#   var.sok_secret_admin_password_id — so no prod password rides on it, but it
+# ⚠ Blast radius: this exposes full-admin UIs (dev's credential is env-scoped,
+#   var.sok_secret_admin_password_id, so no prod password rides on it, but it
 #   is still admin on the cluster). Keep sok_web_external_allowed_cidrs as
 #   narrow as the audience allows and TEAR IT DOWN after use (flip the flag off
-#   + apply, or destroy the layer). The CM/LM/MC UIs are pure admin surface —
+#   + apply, or destroy the layer). The CM/LM/MC UIs are pure admin surface,
 #   think twice before widening their allow-list beyond operators.
 # ⚠ Ephemeral shape: the ALB lives in this (nightly-destroyed) layer, so each
 #   rebuild yields a NEW ALB DNS name. The Route53 CNAMEs are recreated on every
@@ -41,8 +41,8 @@ locals {
   web_vpc_name_tag = var.eks_vpc_name_tag != "" ? var.eks_vpc_name_tag : var.environment
 
   # Splunk Web behind the TLS-terminating ALB: it sees plain HTTP on :8000 and,
-  # left alone, 303-redirects the browser to http://… and — for the login redirect
-  # specifically — to the pod's own socket https://127.0.0.1:8000/…, which the
+  # left alone, 303-redirects the browser to http://… and, for the login redirect
+  # specifically, to the pod's own socket https://127.0.0.1:8000/…, which the
   # browser can't reach. Two web.conf settings fix it:
   #   tools.proxy.on    = true → build absolute redirect URLs proxy-aware, taking
   #                              the scheme from X-Forwarded-Proto (ALB sends https).
@@ -52,7 +52,7 @@ locals {
   #                              login redirect falls back to 127.0.0.1:8000.
   # Applied to EVERY UI-serving CR whenever the flag is on (regardless of the
   # per-component list) so toggling a component in/out of the ALB never restarts
-  # pods — only Ingress rules + DNS records change. Port-forward still works with
+  # pods, only Ingress rules + DNS records change. Port-forward still works with
   # these set (Host: localhost:8000 resolves to itself).
   web_proxy_conf = [
     {
@@ -176,7 +176,7 @@ resource "kubernetes_manifest" "web_ingress" {
     }
     spec = {
       ingressClassName = "alb"
-      # One rule per exposed component — host-based routing on the single ALB.
+      # One rule per exposed component, host-based routing on the single ALB.
       rules = [for c, host in local.web_component_hosts : {
         host = host
         http = {
@@ -196,7 +196,7 @@ resource "kubernetes_manifest" "web_ingress" {
   }
 
   # Block the apply until the AWS Load Balancer Controller provisions the ALB and
-  # writes its DNS name into the Ingress status — that hostname is what the Route53
+  # writes its DNS name into the Ingress status, that hostname is what the Route53
   # records below point at. Replaces the old sok-web-dns.sh poll-in-local-exec.
   wait {
     fields = {
@@ -217,7 +217,7 @@ resource "kubernetes_manifest" "web_ingress" {
 # HEC on the shared ALB (sok_hec_external_enabled): host rule -> the indexer
 # service's HTTPS :8088. Its own Ingress because backend-protocol/health-check
 # annotations are per-Ingress. Verified guidance: ALB-fronting HEC is
-# supported — Firehose gained ALB support 2024-01 and REQUIRES a CA-signed cert
+# supported, Firehose gained ALB support 2024-01 and REQUIRES a CA-signed cert
 # matching the DNS name (exactly what the ALB+ACM give; raw :8088 is
 # self-signed); NLB is NOT supported for Firehose->HEC. Stickiness is 7-day
 # lb_cookie: required for useACK tokens (ack polls must hit the receiving
@@ -234,7 +234,7 @@ resource "kubernetes_manifest" "hec_ingress" {
       annotations = {
         "alb.ingress.kubernetes.io/group.name"  = local.web_alb_group
         "alb.ingress.kubernetes.io/group.order" = "20"
-        # Group-level annotations — must MATCH the web Ingress exactly.
+        # Group-level annotations, must MATCH the web Ingress exactly.
         "alb.ingress.kubernetes.io/scheme"             = "internet-facing"
         "alb.ingress.kubernetes.io/target-type"        = "ip"
         "alb.ingress.kubernetes.io/load-balancer-name" = "splunk-sok-${var.environment}-web"

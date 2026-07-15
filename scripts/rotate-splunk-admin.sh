@@ -93,6 +93,6 @@ done
 if [ "$FAIL" -eq 0 ]; then
   echo "Rotation complete on all instances."
 else
-  echo "$FAIL instance(s) failed — rerun; AWSPREVIOUS is retained until the next rotation." >&2
+  echo "$FAIL instance(s) failed, rerun; AWSPREVIOUS is retained until the next rotation." >&2
   exit 1
 fi

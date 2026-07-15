@@ -1,9 +1,9 @@
 ###############################################################################
-# KV-store backup bucket — point-in-time backups of the SHC KV store.
+# KV-store backup bucket, point-in-time backups of the SHC KV store.
 #
 # The KV store (SHC dashboard state, lookups, user content) lives on the SHC
 # pods' PVCs, which the nightly-destroy model (dev) and any full teardown wipe.
-# SmartStore only covers indexed data, not the KV store — so this bucket is the
+# SmartStore only covers indexed data, not the KV store, so this bucket is the
 # KV store's durability layer, persistent like SmartStore/apps and never part
 # of the eks/sok teardown.
 #
@@ -33,7 +33,7 @@ resource "aws_s3_bucket" "kvbackup" {
     Environment = var.environment
   }
 
-  # The only durability layer for the SHC KV store — never let a destroy take it.
+  # The only durability layer for the SHC KV store, never let a destroy take it.
   lifecycle {
     prevent_destroy = true
   }

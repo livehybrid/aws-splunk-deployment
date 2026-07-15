@@ -1,12 +1,12 @@
 ###############################################################################
-# SOK KV-STORE BACKUP — back up the SHC KV store to S3 (make sok-kvstore-backup
+# SOK KV-STORE BACKUP, back up the SHC KV store to S3 (make sok-kvstore-backup
 # -> scripts/sok-kvstore-backup.sh). Read-side only: it dumps the KV store and
 # uploads the archive; it never restores or mutates the running cluster, so it
 # is low risk and safe to schedule.
 #
 # Runs on demand for either workspace, and nightly against prod as a standing
 # backup (the dev SOK is destroyed+rebuilt nightly, so its KV store is
-# disposable — only prod is scheduled).
+# disposable, only prod is scheduled).
 ###############################################################################
 name: SOK KV-STORE BACKUP
 run-name: SOK KV-STORE BACKUP · ${{ inputs.env || 'prod' }}
@@ -71,9 +71,9 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          # A failed prod KV-store backup means no fresh restore point — worth a
+          # A failed prod KV-store backup means no fresh restore point, worth a
           # ping. No-op until the SLACK_WEBHOOK_URL secret is set.
-          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set, skipping notify"; exit 0; }
           curl -s -m 10 -X POST -H 'Content-Type: application/json' \
-            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\`, ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "$WEBHOOK" || true

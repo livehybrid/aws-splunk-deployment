@@ -1,5 +1,5 @@
 ###############################################################################
-# SOK CHECKS — run the SOK-side health check (CR phases, RF/SF, KV store,
+# SOK CHECKS, run the SOK-side health check (CR phases, RF/SF, KV store,
 # licence) against a workspace running deployment_model=sok. The kubectl-exec
 # analogue of Splunk CHECKS; the AWS-side smoke test is shared with the EC2 path.
 #
@@ -69,7 +69,7 @@ jobs:
           CLUSTER=splunk-sok-$TARGET_ENV
           echo "CLUSTER=$CLUSTER" >> "$GITHUB_ENV"
           if ! aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1; then
-            echo "::error ::cluster $CLUSTER not found — is SOK started?"; exit 1; fi
+            echo "::error ::cluster $CLUSTER not found, is SOK started?"; exit 1; fi
           RUNNER_CIDR="$(curl -s https://checkip.amazonaws.com)/32"
           # Capture the CURRENT allowlist verbatim BEFORE we touch it, so the
           # final always() step can restore exactly this set (removing only the
@@ -79,7 +79,7 @@ jobs:
           echo "ORIG_PUBLIC_CIDRS=$ORIG" >> "$GITHUB_ENV"
           NEW=$(echo "$CURR" | RUNNER_CIDR="$RUNNER_CIDR" python3 -c "import json,sys,os;print(','.join(sorted(set(json.load(sys.stdin)+[os.environ['RUNNER_CIDR']]))))")
           # Only mutate (and thus schedule a restore) if the runner /32 was not
-          # already allowlisted — otherwise ORIG already includes it and the
+          # already allowlisted, otherwise ORIG already includes it and the
           # restore is a harmless no-op.
           if [ "$NEW" != "$ORIG" ]; then
             echo "CIDRS_MODIFIED=1" >> "$GITHUB_ENV"
@@ -91,7 +91,7 @@ jobs:
       - name: SOK health (12 x 120s retry envelope)
         # shell: bash gives `-o pipefail`, so `sok-health.sh | tee` reflects the
         # SCRIPT's exit code, not tee's (always 0). Without this the check could
-        # never fail — it was green even when the cluster was unhealthy.
+        # never fail, it was green even when the cluster was unhealthy.
         shell: bash
         run: |
           for i in $(seq 1 12); do
@@ -115,9 +115,9 @@ jobs:
         run: |
           # OPS-4: an unhealthy post-start cluster needs a human. No-op until the
           # SLACK_WEBHOOK_URL secret is set.
-          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set, skipping notify"; exit 0; }
           curl -s -m 10 -X POST -H 'Content-Type: application/json' \
-            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\`, ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "$WEBHOOK" || true
 
       # SEC-7: always remove the runner /32 we appended so the EKS allowlist
@@ -128,15 +128,15 @@ jobs:
         if: always()
         run: |
           if [ -z "$CIDRS_MODIFIED" ]; then
-            echo "Allowlist was not modified (runner /32 already present or setup did not run) — nothing to restore."
+            echo "Allowlist was not modified (runner /32 already present or setup did not run), nothing to restore."
             exit 0
           fi
           if [ -z "$ORIG_PUBLIC_CIDRS" ] || [ -z "$CLUSTER" ]; then
-            echo "::warning ::original allowlist or cluster name not captured — cannot restore automatically"
+            echo "::warning ::original allowlist or cluster name not captured, cannot restore automatically"
             exit 0
           fi
           echo "Restoring publicAccessCidrs for $CLUSTER to: $ORIG_PUBLIC_CIDRS"
           aws eks update-cluster-config --name "$CLUSTER" \
             --resources-vpc-config "publicAccessCidrs=$ORIG_PUBLIC_CIDRS" || \
-            echo "::warning ::failed to restore allowlist for $CLUSTER — check publicAccessCidrs manually"
+            echo "::warning ::failed to restore allowlist for $CLUSTER, check publicAccessCidrs manually"
           aws eks wait cluster-active --name "$CLUSTER" || true

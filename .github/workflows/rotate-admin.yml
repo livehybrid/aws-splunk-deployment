@@ -1,5 +1,5 @@
 ###############################################################################
-# ROTATE ADMIN — fleet-wide rotation of the splunkadmin password on the EC2
+# ROTATE ADMIN, fleet-wide rotation of the splunkadmin password on the EC2
 # estate (make rotate-admin -> scripts/rotate-splunk-admin.sh). The new
 # password is written to Secrets Manager (/monitoring/splunk/password); read it
 # back with `make password` when needed. A prod run requires confirm=prod
@@ -7,7 +7,7 @@
 #
 # SECURITY: the make target owns the rotation and the new secret NEVER leaves
 # Secrets Manager. This workflow deliberately does NOT enable shell tracing
-# (set -x), does NOT `tee`/print the script output, and reports pass/fail only —
+# (set -x), does NOT `tee`/print the script output, and reports pass/fail only,
 # so no password material can land in the Actions log or the run summary.
 #
 # On-demand only.
@@ -46,7 +46,7 @@ jobs:
 
       - name: Prod confirmation gate
         run: |
-          # A prod rotation changes the live admin password fleet-wide — require
+          # A prod rotation changes the live admin password fleet-wide, require
           # confirm=prod on dispatch. Dev needs no confirmation.
           if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
             echo "::error ::refusing to rotate PROD admin password without confirm=prod"; exit 1; fi
@@ -70,7 +70,7 @@ jobs:
       - name: Rotate admin password (make rotate-admin)
         shell: bash
         run: |
-          # DO NOT enable `set -x` and DO NOT print/tee the target's output —
+          # DO NOT enable `set -x` and DO NOT print/tee the target's output,
           # it may contain the new password. Redirect stdout+stderr to a file
           # that is never uploaded, and surface pass/fail only. On failure we
           # emit a generic message (no captured output) so nothing leaks.
@@ -79,7 +79,7 @@ jobs:
             echo "## Admin password rotated ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
             echo "Rotation completed. Read the new secret with \`make password\` (do not print it in CI)." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::error ::rotate-admin failed for $TARGET_ENV (output withheld to avoid leaking secrets — re-run locally to inspect)"
+            echo "::error ::rotate-admin failed for $TARGET_ENV (output withheld to avoid leaking secrets, re-run locally to inspect)"
             echo "## Admin password rotation FAILED ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

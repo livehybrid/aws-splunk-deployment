@@ -3,12 +3,12 @@ export AWS_PAGER :=
 .DEFAULT_GOAL := help
 
 help: ## show this help (default target)
-	@echo "LiveHybrid Splunk cluster — make targets:" && echo
+	@echo "LiveHybrid Splunk cluster, make targets:" && echo
 	@grep -hE '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo && echo "Most targets need env=<prod|dev>; some need role=<role>."
 ########################################################################################################################
 ##
-##  Makefile — top-level entry points for the LiveHybrid Splunk cluster.
+##  Makefile, top-level entry points for the LiveHybrid Splunk cluster.
 ##  Use `make terraform env=prod` to apply all layers in order (account → iam → eks → sok) per workspace.
 ##
 ########################################################################################################################
@@ -62,13 +62,13 @@ terraform-validate: guard-env ## validate all layers
 	done
 
 ########################################################################################################################
-## SOK (Splunk Operator for Kubernetes) — operations for the eks + sok layers.
+## SOK (Splunk Operator for Kubernetes), operations for the eks + sok layers.
 ##
-##   make kubeconfig env=dev                 — point kubectl at the SOK cluster
-##   make sok-status env=dev                 — CR phases + pods
-##   make kexec env=dev role=cm|indexer|sh|lm|mc — shell into a Splunk pod
-##   make sok-health env=dev                 — deep Splunk checks (RF/SF, KV, licence)
-##   make sok-deploy-apps env=dev [scope=all] — package apps -> S3 -> poll install
+##   make kubeconfig env=dev, point kubectl at the SOK cluster
+##   make sok-status env=dev, CR phases + pods
+##   make kexec env=dev role=cm|indexer|sh|lm|mc, shell into a Splunk pod
+##   make sok-health env=dev, deep Splunk checks (RF/SF, KV, licence)
+##   make sok-deploy-apps env=dev [scope=all], package apps -> S3 -> poll install
 ########################################################################################################################
 
 kubeconfig: guard-env ## point kubectl at the SOK EKS cluster
@@ -80,12 +80,12 @@ sok-password: guard-env ## print the SOK admin password (env-scoped secret)
 sok-hec-token: guard-env ## print the HEC token (operator-generated; rotates each rebuild)
 	@kubectl get secret splunk-splunk-secret -n splunk -o jsonpath='{.data.hec_token}' | base64 -d; echo
 
-sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_external_enabled) — read live from the ALB Ingresses
+sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_external_enabled), read live from the ALB Ingresses
 	@echo "=== external URLs (per-component ALB Ingress hosts) ==="; \
 	kubectl get ingress -n splunk \
 	  -o jsonpath='{range .items[*]}{range .spec.rules[*]}https://{.host}{"\n"}{end}{end}' 2>/dev/null \
 	  | sort -u | sed '/^https:\/\/$$/d' \
-	  || { echo "(no Ingress — external web disabled, or run 'make kubeconfig env=$(env)')"; exit 0; }; \
+	  || { echo "(no Ingress, external web disabled, or run 'make kubeconfig env=$(env)')"; exit 0; }; \
 	echo "=== ALB DNS (CNAME target) ==="; \
 	kubectl get ingress -n splunk \
 	  -o jsonpath='{range .items[*]}{.status.loadBalancer.ingress[*].hostname}{"\n"}{end}' 2>/dev/null | sort -u; \
@@ -93,7 +93,7 @@ sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_extern
 
 sok-status: guard-env ## SOK CR phases + pods
 	@echo "=== CRs ==="; \
-	kubectl get clustermanager,indexercluster,searchheadcluster,standalone,licensemanager,monitoringconsole -n splunk 2>/dev/null || echo "(no cluster — run 'make kubeconfig env=$(env)' and ensure the eks/sok layers are applied)"; \
+	kubectl get clustermanager,indexercluster,searchheadcluster,standalone,licensemanager,monitoringconsole -n splunk 2>/dev/null || echo "(no cluster, run 'make kubeconfig env=$(env)' and ensure the eks/sok layers are applied)"; \
 	echo "=== pods ==="; \
 	kubectl get pods -n splunk -o wide 2>/dev/null
 
@@ -128,14 +128,14 @@ sok-kvstore-restore: guard-env ## restore the SHC KV store from S3 (latest, or a
 sok-rf-remediate: guard-env ## fix the SmartStore cold-boot RF stall (safe no-op when healthy)
 	./scripts/sok-rf-remediate.sh $(env)
 
-# Guarded apply for the sok layer: plans, detects Splunk-CR changes, and — if
-# the cluster is LIVE — lists exactly what the operator will restart (SHC rolls
+# Guarded apply for the sok layer: plans, detects Splunk-CR changes, and, if
+# the cluster is LIVE, lists exactly what the operator will restart (SHC rolls
 # one member at a time; CM/LM/MC/deployer are singletons and blip) and requires
 # a typed ROLL / CONFIRM=ROLL. Stage across CRs with target='<address>'.
 sok-apply: guard-env ## apply sok layer with live-restart guardrail (target=<addr> to stage)
 	./scripts/sok-apply-guard.sh $(env) $(target)
 
-## docs — MkDocs Material site (docs/ + mkdocs.yml). Published to GitHub
+## docs, MkDocs Material site (docs/ + mkdocs.yml). Published to GitHub
 ##        Pages by .github/workflows/docs.yml once the repo is public.
 docs-serve: ## live-preview the docs on http://127.0.0.1:8000
 	@command -v mkdocs >/dev/null || pip install mkdocs-material

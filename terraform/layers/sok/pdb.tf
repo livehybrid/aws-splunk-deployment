@@ -1,5 +1,5 @@
 ###############################################################################
-# PodDisruptionBudgets — the operator creates none. Keep >=1 indexer available
+# PodDisruptionBudgets, the operator creates none. Keep >=1 indexer available
 # per site during voluntary disruptions (node drain/upgrade) so an eviction
 # can't breach RF/SF. Also an SHC PDB (minAvailable 2 of 3) in prod.
 #
@@ -13,7 +13,7 @@
 ###############################################################################
 
 # Single-site (dev): one PDB over the single IndexerCluster's peers (only when
-# it has >1 replica — so a 1-indexer dev gets none).
+# it has >1 replica, so a 1-indexer dev gets none).
 resource "kubernetes_pod_disruption_budget_v1" "indexers" {
   count = !var.multisite && var.sok_indexer_replicas > 1 ? 1 : 0
 

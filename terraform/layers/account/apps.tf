@@ -1,8 +1,8 @@
 ###############################################################################
-# Apps bucket — App Framework source for the SOK tiers (git -> S3 -> operator).
+# Apps bucket, App Framework source for the SOK tiers (git -> S3 -> operator).
 #
 # Persistent, like the SmartStore bucket: the operator's App-Framework Download
-# phase reads it (only the operator pod does — Splunk pods receive apps via
+# phase reads it (only the operator pod does, Splunk pods receive apps via
 # PodCopy), so it must survive the nightly eks/sok destroy/recreate. Private,
 # SSE-KMS with the same workspace KMS key as SmartStore.
 #
@@ -34,7 +34,7 @@ resource "aws_s3_bucket" "apps" {
     Environment = var.environment
   }
 
-  # The App-Framework source of truth for every SOK tier — never let a destroy
+  # The App-Framework source of truth for every SOK tier, never let a destroy
   # take it (mirrors smartstore/kvbackup). The foundation layer is persistent and
   # out of the nightly teardown.
   lifecycle {

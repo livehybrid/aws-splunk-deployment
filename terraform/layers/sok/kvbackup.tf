@@ -1,5 +1,5 @@
 ###############################################################################
-# KV-store backup — an in-cluster CronJob backs up the SHC KV store to the
+# KV-store backup, an in-cluster CronJob backs up the SHC KV store to the
 # persistent kvbackup bucket (sok-foundation) every 6h via IRSA. SHC-only:
 # dev's Standalone KV store is disposable (nightly destroy). Restore is manual /
 # start-workflow via scripts/sok-kvstore-restore.sh.
@@ -8,7 +8,7 @@
 #   - RBAC: pods/exec (kubectl exec + cp into the SHC member),
 #   - IRSA: S3 read/write on the kvbackup bucket + kms on the workspace key.
 # The backup itself runs `splunk backup kvstore` INSIDE the SHC member (password
-# read in-pod) — see scripts/sok-kvstore-backup.sh, mounted here so the CronJob
+# read in-pod), see scripts/sok-kvstore-backup.sh, mounted here so the CronJob
 # and manual `make sok-kvstore-backup` share one implementation.
 #
 # Validated end-to-end against a live dev SHC 2026-07-10 (backup -> S3 SSE-KMS ->
@@ -159,7 +159,7 @@ resource "kubernetes_cron_job_v1" "kvbackup" {
             container {
               name = "kvbackup"
               # kubectl + aws + bash. Community image, hence DIGEST-pinned
-              # (SEC-6/DEP-8) — the tag documents the version, the digest is
+              # (SEC-6/DEP-8), the tag documents the version, the digest is
               # what runs; a mutated tag can't ride into the 6-hourly job. A
               # first-party replacement (own ECR build) stays open under #38.
               image   = "alpine/k8s:1.34.1@sha256:ec714df3813b5405292860f8a1c55c5727bf8c33c88992f1e981efad8065547f"

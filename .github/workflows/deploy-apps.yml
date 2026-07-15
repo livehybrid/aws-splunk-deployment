@@ -1,17 +1,17 @@
 ###############################################################################
-# SOK DEPLOY APPS — package the splunk-apps repo to the SOK App Framework
+# SOK DEPLOY APPS, package the splunk-apps repo to the SOK App Framework
 # bucket (git -> S3 -> operator Download -> PodCopy), and build+ship the SOK
 # console UCC add-on (Splunk_TA_sok_console) to the same sh-apps/ prefix.
 #
-# Manual dispatch only — never auto-deploy on push. A prod deploy touches the
+# Manual dispatch only, never auto-deploy on push. A prod deploy touches the
 # live estate, so it requires confirm=prod (mirrors sok-stop.yml).
 #
 # scope values:
-#   all      — every tier prefix + the console add-on
-#   cm|sh|idx|shc|mc — a single tier prefix (passed straight to package-apps.sh)
-#   console  — build+ship Splunk_TA_sok_console only (skips package-apps.sh)
+#   all, every tier prefix + the console add-on
+#   cm|sh|idx|shc|mc, a single tier prefix (passed straight to package-apps.sh)
+#   console, build+ship Splunk_TA_sok_console only (skips package-apps.sh)
 #
-# `mc` syncs the mc-apps/ prefix (the MonitoringConsole appRepo — see
+# `mc` syncs the mc-apps/ prefix (the MonitoringConsole appRepo, see
 # docs/handoff-sok-lessons-remainder.md A1). Applying the MC appRepo to a live
 # cluster restarts the MC pod once, so run make sok-apply first (or land before
 # a rebuild) before dispatching scope=mc.
@@ -59,7 +59,7 @@ jobs:
 
       - name: Prod confirmation gate
         run: |
-          # DEP-5: a prod app deploy touches the live estate — require confirm=prod.
+          # DEP-5: a prod app deploy touches the live estate, require confirm=prod.
           if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
             echo "::error ::refusing to deploy apps to PROD without confirm=prod"; exit 1; fi
 
@@ -151,7 +151,7 @@ jobs:
           [ -d "output/$APP" ] || { echo "::error ::ucc-gen produced no output/$APP"; exit 1; }
           BUCKET="livehybrid-splunk-${TARGET_ENV}-splunk-apps-${TARGET_ENV}"
 
-          # Deterministic tgz — mirrors scripts/package-apps.sh (OPS-11): stage a
+          # Deterministic tgz, mirrors scripts/package-apps.sh (OPS-11): stage a
           # copy, pin every mtime, archive a sorted FILE list via -T, zero
           # uid/gid, gzip -n. Identical content => identical bytes, so the App
           # Framework's checksum-driven redeploy fires only on real changes. The

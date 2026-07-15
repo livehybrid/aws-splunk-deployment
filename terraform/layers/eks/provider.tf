@@ -15,7 +15,7 @@ provider "aws" {
 
 # This layer is PURE AWS INFRASTRUCTURE plus the two K8s objects the hashicorp
 # kubernetes/helm providers can create in the same apply that builds the cluster
-# (StorageClasses, the ALB controller) — those providers tolerate an
+# (StorageClasses, the ALB controller), those providers tolerate an
 # unknown-at-plan host and defer. The alekc/kubectl provider does NOT: it
 # configures eagerly at plan and fails against a not-yet-existent API server, so
 # ALL kubectl work (the CRDs) and the operator live in the sok layer, whose

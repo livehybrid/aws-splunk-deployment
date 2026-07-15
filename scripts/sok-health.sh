@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SOK-side health checks (deployment_model=sok) — the kubectl-exec analogue of
+# SOK-side health checks (deployment_model=sok), the kubectl-exec analogue of
 # cluster-health.sh. Auth as `admin` (the operator's hardcoded user, NOT the
 # EC2 estate's splunkadmin), password read INSIDE the pod from
 # /mnt/splunk-secrets/password so it never lands on the command line.
@@ -13,7 +13,7 @@
 # Checks: every CR phase Ready; indexer cluster RF/SF + searchable + peers Up
 # (via the ClusterManager); Standalone and/or SHC KV store ready (+ the SHC KV
 # store captain); licence stack present. REST reads use curl to splunkd, NOT
-# `splunk _internal call` — the latter returns EMPTY for some endpoints (e.g.
+# `splunk _internal call`, the latter returns EMPTY for some endpoints (e.g.
 # licenser/licenses), which faked a "no licence" failure. Needs kubectl pointed
 # at the cluster (make kubeconfig env=<env>).
 set -uo pipefail
@@ -29,14 +29,14 @@ warn()  { printf '\033[33m!\033[0m %s\n' "$*"; }
 hdr()   { printf '\n=== %s ===\n' "$*"; }
 
 kubectl get ns "$NS" >/dev/null 2>&1 || {
-  echo "namespace $NS not reachable — run: make kubeconfig env=$ENV" >&2; exit 1; }
+  echo "namespace $NS not reachable, run: make kubeconfig env=$ENV" >&2; exit 1; }
 
 # splunk CLI inside a pod; admin auth resolved from the in-pod secret.
 splx() { local pod=$1; shift
   kubectl exec -n "$NS" "$pod" -- bash -c \
     "/opt/splunk/bin/splunk $* -auth admin:\$(cat /mnt/splunk-secrets/password)" 2>/dev/null || true
 }
-# REST GET inside a pod (JSON) via curl to splunkd — reliable where
+# REST GET inside a pod (JSON) via curl to splunkd, reliable where
 # `splunk _internal call` returns empty (e.g. the licenser endpoints).
 curlx() { local pod=$1 path=$2
   kubectl exec -n "$NS" "$pod" -- bash -c \
@@ -60,7 +60,7 @@ for kind in clustermanager licensemanager monitoringconsole indexercluster stand
     if [ "$ph" = "Ready" ]; then
       green "$kind/$name Ready"
     elif [ "$kind" = monitoringconsole ]; then
-      warn "$kind/$name phase=${ph:-missing} (non-fatal — see OPS-13)"
+      warn "$kind/$name phase=${ph:-missing} (non-fatal, see OPS-13)"
     else
       red "$kind/$name phase=${ph:-missing}"
     fi
@@ -68,7 +68,7 @@ for kind in clustermanager licensemanager monitoringconsole indexercluster stand
 done
 [ "$any_cr" = 0 ] && red "no Splunk CRs found in $NS"
 
-# --- Indexer cluster (via the ClusterManager — always named cm, any shape) ---
+# --- Indexer cluster (via the ClusterManager, always named cm, any shape) ---
 hdr "Indexer cluster (via ClusterManager)"
 CM=$(pod_by_name cluster-manager)
 if [ -z "$CM" ]; then red "no ClusterManager pod"; else
@@ -102,7 +102,7 @@ if [ -n "$SHC_PODS" ]; then
 fi
 [ -z "$SH$SHC_PODS" ] && red "no Standalone or SHC search-head pods found"
 
-# --- Licence (via LicenseManager, curl REST — asserts an entry) ---
+# --- Licence (via LicenseManager, curl REST, asserts an entry) ---
 hdr "Licence (via LicenseManager)"
 LM=$(pod_by_name license-manager)
 if [ -z "$LM" ]; then red "no LicenseManager pod"; else
@@ -111,7 +111,7 @@ if [ -z "$LM" ]; then red "no LicenseManager pod"; else
     N=$(echo "$LIC" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("entry",[])))' 2>/dev/null || echo 0)
     [ "${N:-0}" -ge 1 ] && green "licence stack present ($N entr$([ "$N" = 1 ] && echo y || echo ies))" || red "no licence entries"
   else
-    red "licence REST returned no entry key (auth failure — the silent-401 trap)"
+    red "licence REST returned no entry key (auth failure, the silent-401 trap)"
   fi
 fi
 
@@ -122,8 +122,8 @@ fi
 # running. Surface those orphans from each app-bearing CR's status so they can be
 # retired DELIBERATELY: ship a same-named tombstone package whose
 # default/app.conf carries `[install]\nstate = disabled` (the operator redeploys
-# on the checksum change and Splunk disables it), then drop the tgz. Non-fatal —
-# this is drift to clean up, not a data-plane failure — so it warns, not reds.
+# on the checksum change and Splunk disables it), then drop the tgz. Non-fatal,
+# this is drift to clean up, not a data-plane failure, so it warns, not reds.
 hdr "App Framework drift (GH #893)"
 drift=0
 # Only these CRs carry an appRepo (idx apps ride the CM; LM/IndexerCluster none).
@@ -140,7 +140,7 @@ for src, info in (ctx.get("appSrcDeployStatus") or {}).items():
             print("%s/%s" % (src, a.get("appName", "?")))
 ' 2>/dev/null)
     for o in $orphans; do
-      warn "$kind/$name orphaned app still installed (repoState=Deleted): $o — retire via state=disabled tombstone"
+      warn "$kind/$name orphaned app still installed (repoState=Deleted): $o, retire via state=disabled tombstone"
       drift=$((drift+1))
     done
   done
@@ -150,6 +150,6 @@ done
 hdr "Summary"
 if [ "$FAIL" -eq 0 ]; then
   green "all SOK health checks passed"
-  [ "$drift" -gt 0 ] && warn "$drift App Framework orphan(s) to retire (non-fatal — see GH #893 above)"
+  [ "$drift" -gt 0 ] && warn "$drift App Framework orphan(s) to retire (non-fatal, see GH #893 above)"
   exit 0
 else red "$FAIL check(s) failed"; exit 1; fi

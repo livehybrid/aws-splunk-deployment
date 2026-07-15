@@ -37,7 +37,7 @@ resource "aws_route53_zone" "private" {
 
 # Route53's default SOA negative-TTL is 900s: an instance that looks up a
 # cluster name before its A record lands gets NXDOMAIN cached at the VPC
-# resolver for 15 minutes — exactly the cold-start "indexer cannot reach
+# resolver for 15 minutes, exactly the cold-start "indexer cannot reach
 # manager" race. 60s keeps that window shorter than one bootstrap retry.
 resource "aws_route53_record" "private_soa" {
   zone_id         = aws_route53_zone.private.zone_id

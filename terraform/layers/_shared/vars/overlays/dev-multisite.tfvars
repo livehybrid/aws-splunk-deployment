@@ -1,4 +1,4 @@
-# Dev multisite overlay (DEP-3/OPS-9) — the EXACT shape the S0b +
+# Dev multisite overlay (DEP-3/OPS-9), the EXACT shape the S0b +
 # KV-backup validation passed on: multisite (2 sites × 2 indexers, origin:2/
 # total:3) + a 3-member SHC, on per-AZ node groups. Applied ON TOP of
 # vars/dev.tfvars:
@@ -10,7 +10,7 @@
 #
 # or via the SOK START workflow's `overlay` input (= dev-multisite). Dev's
 # committed default stays the cheap single-node single-site shape; teardown
-# (SOK STOP) needs no overlay — destroy removes whatever is in state.
+# (SOK STOP) needs no overlay, destroy removes whatever is in state.
 multisite                      = true
 available_sites                = "site1,site2"
 site_replication_factor_origin = 2

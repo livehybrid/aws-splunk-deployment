@@ -1,5 +1,5 @@
 ###############################################################################
-# SOK RF REMEDIATE — fix the SmartStore cold-boot RF/SF stall on the SOK
+# SOK RF REMEDIATE, fix the SmartStore cold-boot RF/SF stall on the SOK
 # indexer cluster (make sok-rf-remediate -> scripts/sok-rf-remediate.sh). A
 # safe no-op when the cluster is already at replication + search factor, so it
 # is low risk to run any time (e.g. after a nightly rebuild that came up with
