@@ -218,6 +218,21 @@ options:
   `etc/apps/splunk_monitoring_console/metadata/local.meta` setting the sharing.
   Most durable and image-controlled, but adds an image build to the pipeline.
 
+Do **not** try to do this by pushing an app *named* `splunk_monitoring_console`
+that contains only a `metadata/local.meta`. The App Framework delivers **whole app
+packages**, it is not the app's own `local/`-over-`default/` layering. Reusing a
+built-in app's name means one of two bad outcomes: in the benign case the package
+is extracted over the app dir (an overlay), but your `local.meta` then overwrites
+the built-in one at the file level (not a stanza merge) and you are co-owning a
+built-in app name with the operator's app manager, which is fragile and
+version-dependent, and the App Framework never cleanly removes an app (GH #893);
+in the bad case a given operator version treats the package as the authoritative
+copy and replaces the directory, wiping `dmc_assets`, the MC dashboards and the
+rest of the built-in app. If you want a genuine metadata overlay, bake the
+`local.meta` into a **custom image** (it is part of the app dir before Splunk
+starts). Otherwise use a **separate-named** setup app that only changes the ACL by
+REST, it never touches the `splunk_monitoring_console` directory.
+
 Either way this is a `splunk-apps` / runtime change, **not** a Terraform CR
 change, so it ships via the App Framework (`make sok-deploy-apps scope=mc`) or a
 runtime REST call, not `make sok-apply`.
