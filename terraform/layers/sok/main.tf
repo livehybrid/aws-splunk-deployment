@@ -1,6 +1,6 @@
 ###############################################################################
 # Locals + AWS foundation discovery (naming conventions, not remote state,
-# see the eks layer header) + the EC2/SOK exclusivity guard.
+# see the eks layer header).
 ###############################################################################
 
 locals {
@@ -21,7 +21,7 @@ locals {
 }
 
 # Discovered by naming convention (matching the account layer and prod). These
-# are created by the persistent sok-foundation layer, apply that first.
+# are created by the persistent account layer, apply that first.
 data "aws_s3_bucket" "smartstore" {
   bucket = local.smartstore_bucket_name
 }
