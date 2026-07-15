@@ -1,12 +1,21 @@
 # Splunk Operator for Kubernetes (SOK) — design study
 
+!!! note "Historical design record"
+    This page captures the research that led to the SOK build, including the
+    EC2-vs-SOK comparison and the per-workspace-toggle design that was current
+    when the study was written. The estate has since gone **SOK-only**: the EC2
+    deployment model is removed, and the former `sok-foundation` layer is merged
+    into the `account` layer. Read the EC2 references below as the *rationale*
+    for choosing SOK, not as a description of the current architecture (which is
+    in the [overview](kubernetes-sok-overview.md)).
+
 This page is the output of a deep-dive into migrating the M3 deployment to the
 [Splunk Operator for Kubernetes](https://github.com/splunk/splunk-operator)
-on EKS, and into offering **EC2 vs SOK as a per-workspace toggle**. Every
-load-bearing claim below was adversarially verified against primary sources;
-citations inline. A phase-by-phase build plan derived from this study lives
-at [SOK implementation plan](kubernetes-sok-plan.md), the day-to-day working
-model at the [SOK overview](kubernetes-sok-overview.md).
+on EKS, and into whether to offer EC2 and SOK side by side. Every load-bearing
+claim below was adversarially verified against primary sources; citations
+inline. A phase-by-phase build plan derived from this study lives at
+[SOK implementation plan](kubernetes-sok-plan.md), the day-to-day working model
+at the [SOK overview](kubernetes-sok-overview.md).
 
 ## Verdict
 
@@ -190,20 +199,21 @@ Medium, bare-metal K8s, Splunk 9.x, ~1yr+). Apply these from day one:
   **no throughput gain** from SOK (SVA: "no reduction in hardware
   requirements").
 
-## Terraform toggle design (rationale)
+## Terraform layer design (rationale)
 
-`deployment_model = "ec2" | "sok"` per workspace picks the build. The
-**as-built layer model, the toggle flag and the exclusivity guard are owned
-by the [overview](kubernetes-sok-overview.md#the-architecture-six-terraform-layers)**
-(the six-layer split, `deployment_model` variable, one-live-cluster-manager
-warning); `configuration.md` owns the [variable definition](configuration.md).
-This study records only the design *rationale* that led there:
+The study originally proposed `deployment_model = "ec2" | "sok"` per workspace
+to pick the build; the estate has since dropped EC2, so SOK is the only model.
+The **as-built layer model is owned by the
+[overview](kubernetes-sok-overview.md#the-architecture-four-terraform-layers)**
+(the four-layer split, one-live-cluster-manager warning); `configuration.md`
+owns the [variable definitions](configuration.md). This study records only the
+design *rationale* that led there:
 
-- **Why separate layers, not one conditional module.** A whole root module
-  can't be conditionally included, and mixing EC2 and SOK resources in one
-  state makes both plans noisy. Separate layers keep each state clean and let
-  the shared `account`/`iam` foundation serve both paths; the SOK path adds
-  `sok-foundation` (persistent S3 + KMS) + `eks` + `sok`.
+- **Why separate layers, not one conditional module.** Mixing all resources in
+  one state makes plans noisy. Separate layers keep each state clean and split
+  the persistent data from the disposable compute: the `account` layer holds
+  the persistent S3 + KMS (it absorbed the former `sok-foundation` layer), and
+  `eks` + `sok` are the compute.
 - **Why the operator lives in the `sok` layer, not `eks`.** `alekc/kubectl`
   configures eagerly at plan time and cannot run in the same apply that
   creates the cluster, so the operator, CRDs and CRs must sit where the
@@ -221,8 +231,8 @@ This study records only the design *rationale* that led there:
   provider ≥6.0** (locked to 6.54.0), so the two coexist without a repo-wide
   upgrade.
 - CI (built): `sok-deploy-apps` packages each `org_*` app deterministically
-  and publishes to the apps bucket, then App Framework detects it by Etag
-  (EC2 keeps its push scripts). See [apps-repo-handoff](apps-repo-handoff.md).
+  and publishes to the apps bucket, then App Framework detects it by Etag. See
+  [Apps & deployment](apps.md).
 
 
 ## Validation spikes gating the prod cutover
@@ -267,7 +277,7 @@ gateway endpoint, so no NAT and ~$0 SmartStore transfer). Earlier
 | Running compute | n instances (per Infracost) | Same instance count/types as nodes (x86 only, no Spot for indexers) — **no saving**; SVA confirms same hardware needs |
 | Running all-in | (≈ $833/mo always-on) | **≈ $750/mo** (compute $414 + control plane $73 + PVCs $225 + NLBs $37) |
 | **STOPPED floor** (compute off, cluster kept — *pause model, unshipped*) | **~$8/mo** (no control-plane charge — the whole point of the asymmetry) | **~$73/mo control plane + retained EBS PVCs + S3** — the SOK build **avoids this state** |
-| **DESTROYED floor** (`terraform destroy`, data left in place) | ~a few $/mo of S3 + KMS | **~$1-2/mo** (persistent `sok-foundation` S3 + KMS only) — where the nightly SOK stop lands |
+| **DESTROYED floor** (`terraform destroy`, data left in place) | ~a few $/mo of S3 + KMS | **~$1-2/mo** (persistent `account`-layer S3 + KMS only) — where the nightly SOK stop lands |
 | Version-lag penalty | — | Control plane ages into extended support → **$438/mo** on **2026-12-02** (K8s 1.34 cliff); annual K8s upgrades become mandatory, gated on SOK's release cadence (ceiling 1.34 today) |
 | Migration-scoped extras | — | Apps S3 bucket (pennies), operator pod + its 10Gi PVC, NAT/LB deltas ≈ wash |
 
