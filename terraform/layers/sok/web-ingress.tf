@@ -25,9 +25,10 @@
 #   + apply, or destroy the layer). The CM/LM/MC UIs are pure admin surface —
 #   think twice before widening their allow-list beyond operators.
 # ⚠ Ephemeral shape: the ALB lives in this (nightly-destroyed) layer, so each
-#   rebuild yields a NEW ALB DNS name. The Route53 CNAMEs are re-pointed on every
-#   apply by scripts/sok-web-dns.sh. A URL that is stable across rebuilds wants
-#   the external-dns addon (follow-up), not this.
+#   rebuild yields a NEW ALB DNS name. The Route53 CNAMEs are recreated on every
+#   apply from the ALB hostname the controller writes back to the Ingress status
+#   (kubernetes_manifest wait{fields} -> aws_route53_record). A URL that is stable
+#   across rebuilds wants the external-dns addon (follow-up), not this.
 ###############################################################################
 
 locals {
@@ -141,17 +142,12 @@ locals {
     var.sok_web_external_certificate_arn != "" ? var.sok_web_external_certificate_arn : data.aws_acm_certificate.web[0].arn
   ) : ""
   web_subnet_ids = local.web_external_enabled ? data.aws_subnets.web_public[0].ids : []
-  # RELATIVE path, deliberately: destroy provisioners replay the trigger value
-  # recorded at CREATE time, so an abspath() minted on a laptop is unrunnable on
-  # the CI runner (first CI dev-stop failure). local-exec's cwd is the layer dir
-  # on both, so the relative form is portable across creators.
-  web_dns_script = "${path.module}/../../../scripts/sok-web-dns.sh"
 }
 
-resource "kubectl_manifest" "web_ingress" {
+resource "kubernetes_manifest" "web_ingress" {
   count = local.web_external_enabled ? 1 : 0
 
-  yaml_body = yamlencode({
+  manifest = {
     apiVersion = "networking.k8s.io/v1"
     kind       = "Ingress"
     metadata = {
@@ -197,7 +193,16 @@ resource "kubectl_manifest" "web_ingress" {
         }
       }]
     }
-  })
+  }
+
+  # Block the apply until the AWS Load Balancer Controller provisions the ALB and
+  # writes its DNS name into the Ingress status — that hostname is what the Route53
+  # records below point at. Replaces the old sok-web-dns.sh poll-in-local-exec.
+  wait {
+    fields = {
+      "status.loadBalancer.ingress[0].hostname" = "^.+$"
+    }
+  }
 
   lifecycle {
     precondition {
@@ -217,10 +222,10 @@ resource "kubectl_manifest" "web_ingress" {
 # self-signed); NLB is NOT supported for Firehose->HEC. Stickiness is 7-day
 # lb_cookie: required for useACK tokens (ack polls must hit the receiving
 # node); harmless for plain senders.
-resource "kubectl_manifest" "hec_ingress" {
+resource "kubernetes_manifest" "hec_ingress" {
   count = local.hec_external_enabled ? 1 : 0
 
-  yaml_body = yamlencode({
+  manifest = {
     apiVersion = "networking.k8s.io/v1"
     kind       = "Ingress"
     metadata = {
@@ -268,60 +273,39 @@ resource "kubectl_manifest" "hec_ingress" {
         }
       }]
     }
-  })
+  }
 
-  depends_on = [kubectl_manifest.web_ingress]
+  wait {
+    fields = {
+      "status.loadBalancer.ingress[0].hostname" = "^.+$"
+    }
+  }
+
+  depends_on = [kubernetes_manifest.web_ingress]
 }
 
-resource "null_resource" "hec_dns" {
-  count = local.hec_external_enabled ? 1 : 0
-
-  triggers = {
-    zone_id      = data.aws_route53_zone.web[0].zone_id
-    hostname     = local.hec_host
-    namespace    = local.namespace
-    ingress      = "splunk-hec"
-    script       = local.web_dns_script
-    ingress_body = kubectl_manifest.hec_ingress[0].yaml_body
-  }
-
-  provisioner "local-exec" {
-    command = "'${self.triggers.script}' upsert '${self.triggers.zone_id}' '${self.triggers.hostname}' '${self.triggers.namespace}' '${self.triggers.ingress}'"
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = "'${self.triggers.script}' delete '${self.triggers.zone_id}' '${self.triggers.hostname}' '${self.triggers.namespace}' '${self.triggers.ingress}'"
-  }
-
-  depends_on = [kubectl_manifest.hec_ingress]
-}
-
-# The ALB is provisioned by the controller AFTER the Ingress, so its DNS name is
-# unknown at apply time. One record per exposed component: each waits for the
-# (shared) ALB hostname on the Ingress and UPSERTs its CNAME; DELETEs on destroy.
-# external-dns would own this in a durable setup; kept script-side to avoid
-# adding an addon for opt-in use.
-resource "null_resource" "web_dns" {
+# The ALB is provisioned by the controller AFTER the Ingress and shared by both
+# Ingresses (same group.name), so its DNS name is unknown until apply time. The
+# kubernetes_manifest `wait` blocks above hold the apply until the controller
+# writes that name into status.loadBalancer.ingress[0].hostname; these records
+# then point the per-component CNAMEs at it. Recreated each rebuild (new ALB
+# name); external-dns would own this in a durable, always-on setup (follow-up).
+resource "aws_route53_record" "web" {
   for_each = local.web_component_hosts
 
-  triggers = {
-    zone_id      = data.aws_route53_zone.web[0].zone_id
-    hostname     = each.value
-    namespace    = local.namespace
-    ingress      = "splunk-web"
-    script       = local.web_dns_script
-    ingress_body = kubectl_manifest.web_ingress[0].yaml_body
-  }
+  zone_id = data.aws_route53_zone.web[0].zone_id
+  name    = each.value
+  type    = "CNAME"
+  ttl     = 60
+  records = [kubernetes_manifest.web_ingress[0].object.status.loadBalancer.ingress[0].hostname]
+}
 
-  provisioner "local-exec" {
-    command = "'${self.triggers.script}' upsert '${self.triggers.zone_id}' '${self.triggers.hostname}' '${self.triggers.namespace}' '${self.triggers.ingress}'"
-  }
+resource "aws_route53_record" "hec" {
+  count = local.hec_external_enabled ? 1 : 0
 
-  provisioner "local-exec" {
-    when    = destroy
-    command = "'${self.triggers.script}' delete '${self.triggers.zone_id}' '${self.triggers.hostname}' '${self.triggers.namespace}' '${self.triggers.ingress}'"
-  }
-
-  depends_on = [kubectl_manifest.web_ingress]
+  zone_id = data.aws_route53_zone.web[0].zone_id
+  name    = local.hec_host
+  type    = "CNAME"
+  ttl     = 60
+  records = [kubernetes_manifest.hec_ingress[0].object.status.loadBalancer.ingress[0].hostname]
 }
