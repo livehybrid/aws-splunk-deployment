@@ -26,9 +26,9 @@ on:
         options: [prod, dev]
         default: dev
       layer:
-        description: "Which layer to plan (all = account -> iam -> cluster in order)"
+        description: "Which layer to plan (all = account -> iam -> eks -> sok in order)"
         type: choice
-        options: [all, account, iam, cluster]
+        options: [all, account, iam, eks, sok]
         default: all
 
 permissions:
@@ -75,7 +75,7 @@ jobs:
           # Never `set -x` here — a plan diff can contain resource attributes.
           set +x
           set -euo pipefail
-          if [ "$LAYER" = "all" ]; then LAYERS="account iam cluster"; else LAYERS="$LAYER"; fi
+          if [ "$LAYER" = "all" ]; then LAYERS="account iam eks sok"; else LAYERS="$LAYER"; fi
           echo "## Terraform plan ($TARGET_ENV) — read-only" >> "$GITHUB_STEP_SUMMARY"
           rc=0
           for layer in $LAYERS; do

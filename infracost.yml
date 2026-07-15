@@ -8,7 +8,10 @@ version: "0.1"
 #   - CI:    .github/workflows/infracost.yml
 #
 # Each project is processed independently; the PR comment groups them by
-# workspace so prod and dev totals are clearly separated.
+# workspace so prod and dev totals are clearly separated. The account layer
+# holds the persistent SmartStore/apps/KV-backup buckets + KMS; eks is the
+# control plane + nodes. The sok layer adds only $0 IAM roles and needs the eks
+# remote state to plan, so it is not costed standalone.
 ###############################################################################
 
 projects:
@@ -24,8 +27,8 @@ projects:
       - ../_shared/vars/prod.tfvars
     terraform_workspace: prod
 
-  - path: terraform/layers/cluster
-    name: cluster-prod
+  - path: terraform/layers/eks
+    name: eks-prod
     terraform_var_files:
       - ../_shared/vars/prod.tfvars
     terraform_workspace: prod
@@ -42,37 +45,8 @@ projects:
       - ../_shared/vars/dev.tfvars
     terraform_workspace: dev
 
-  - path: terraform/layers/cluster
-    name: cluster-dev
-    terraform_var_files:
-      - ../_shared/vars/dev.tfvars
-    terraform_workspace: dev
-
-  # SOK path (deployment_model=sok). The sok layer itself adds only $0 IAM roles
-  # and needs the eks remote state to plan, so it isn't costed standalone —
-  # eks (control plane + nodes) + sok-foundation (S3/KMS) capture the SOK cost.
-  - path: terraform/layers/sok-foundation
-    name: sok-foundation-dev
-    terraform_var_files:
-      - ../_shared/vars/dev.tfvars
-    terraform_workspace: dev
-
   - path: terraform/layers/eks
     name: eks-dev
     terraform_var_files:
       - ../_shared/vars/dev.tfvars
     terraform_workspace: dev
-
-  # Prod SOK profile (staged behind deployment_model=ec2, but the eks/sok layer
-  # sizing in prod.tfvars costs the same when the migration cuts over).
-  - path: terraform/layers/sok-foundation
-    name: sok-foundation-prod
-    terraform_var_files:
-      - ../_shared/vars/prod.tfvars
-    terraform_workspace: prod
-
-  - path: terraform/layers/eks
-    name: eks-prod
-    terraform_var_files:
-      - ../_shared/vars/prod.tfvars
-    terraform_workspace: prod

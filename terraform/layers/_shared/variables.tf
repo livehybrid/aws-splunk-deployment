@@ -228,7 +228,7 @@ variable "sok_secret_license_id" {
 }
 
 variable "sok_secret_hec_token_id" {
-  description = "Secrets Manager id of the persistent HEC token (OPS-14). CREATED and seeded by the sok-foundation layer (which is not part of the nightly teardown), then read here so the token survives every rebuild instead of regenerating. Matches the /<env>/splunk/hec_token naming convention foundation writes."
+  description = "Secrets Manager id of the persistent HEC token (OPS-14). CREATED and seeded by the account layer (which is not part of the nightly teardown), then read here so the token survives every rebuild instead of regenerating. Matches the /<env>/splunk/hec_token naming convention the account layer writes."
   type        = string
   default     = "/prod/splunk/hec_token"
 }

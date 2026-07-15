@@ -55,18 +55,18 @@ validate-account-prod:
 validate-iam-prod:
   <<: *validate-template
   variables: { LAYER: iam, ENV: prod }
-validate-cluster-prod:
+validate-eks-prod:
   <<: *validate-template
-  variables: { LAYER: cluster, ENV: prod }
+  variables: { LAYER: eks, ENV: prod }
 validate-account-dev:
   <<: *validate-template
   variables: { LAYER: account, ENV: dev }
 validate-iam-dev:
   <<: *validate-template
   variables: { LAYER: iam, ENV: dev }
-validate-cluster-dev:
+validate-eks-dev:
   <<: *validate-template
-  variables: { LAYER: cluster, ENV: dev }
+  variables: { LAYER: eks, ENV: dev }
 
 ###############################################################################
 # plan — MR-gated; artifact uploaded for the apply stage.
@@ -95,9 +95,9 @@ plan-iam-prod:
   <<: *plan-template
   variables: { LAYER: iam, ENV: prod }
   needs: [plan-account-prod]
-plan-cluster-prod:
+plan-eks-prod:
   <<: *plan-template
-  variables: { LAYER: cluster, ENV: prod }
+  variables: { LAYER: eks, ENV: prod }
   needs: [plan-iam-prod]
 
 plan-account-dev:
@@ -107,9 +107,9 @@ plan-iam-dev:
   <<: *plan-template
   variables: { LAYER: iam, ENV: dev }
   needs: [plan-account-dev]
-plan-cluster-dev:
+plan-eks-dev:
   <<: *plan-template
-  variables: { LAYER: cluster, ENV: dev }
+  variables: { LAYER: eks, ENV: dev }
   needs: [plan-iam-dev]
 
 ###############################################################################
@@ -120,7 +120,7 @@ infracost-diff:
   stage: infracost
   image: infracost/infracost:ci-0.10
   script:
-    - cd terraform/layers/cluster
+    - cd terraform/layers/eks
     - infracost diff
         --path .
         --terraform-var-file vars/prod.tfvars
@@ -135,7 +135,7 @@ infracost-diff:
         --merge-request $CI_MERGE_REQUEST_IID
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  needs: [plan-cluster-prod]
+  needs: [plan-eks-prod]
 
 ###############################################################################
 # apply — manual, prod only after MR merged to main.
@@ -163,9 +163,9 @@ apply-iam-prod:
   <<: *apply-template
   variables: { LAYER: iam, ENV: prod }
   needs: [apply-account-prod]
-apply-cluster-prod:
+apply-eks-prod:
   <<: *apply-template
-  variables: { LAYER: cluster, ENV: prod }
+  variables: { LAYER: eks, ENV: prod }
   needs: [apply-iam-prod]
 
 ###############################################################################
@@ -178,7 +178,7 @@ drift-detection:
   before_script:
     - apk add --no-cache jq curl aws-cli
   script:
-    - cd terraform/layers/cluster
+    - cd terraform/layers/eks
     - terraform init -var-file=vars/prod.tfvars -backend-config=conf/prod.backend.conf
     - terraform workspace select prod
     - set +e
