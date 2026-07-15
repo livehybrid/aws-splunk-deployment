@@ -5,15 +5,3 @@ terraform {
     encrypt = true
   }
 }
-
-data "terraform_remote_state" "account" {
-  backend   = "s3"
-  workspace = var.environment
-
-  config = {
-    bucket  = var.state_bucket
-    key     = "account/terraform.tfstate"
-    region  = var.region
-    profile = var.profile
-  }
-}

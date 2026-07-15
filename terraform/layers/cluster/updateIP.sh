@@ -1,2 +1,0 @@
-make terraform-clean
-make terraform env=$1 args="-target aws_security_group_rule.ssh_management_from_trusted -target aws_security_group_rule.searchhead_alb_http_from_trusted -target aws_security_group_rule.master_ui_http_from_trusted -target aws_security_group_rule.master_proxy_https_from_trusted -target aws_security_group_rule.license_ui_http_from_trusted -target aws_security_group_rule.ds_ext_1_ui_http_from_trusted -target aws_security_group_rule.ds_ext_1_proxy_https_from_trusted"

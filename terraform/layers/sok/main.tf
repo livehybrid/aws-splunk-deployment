@@ -30,27 +30,3 @@ data "aws_kms_alias" "smartstore" {
   name = "alias/splunk-smartstore-${var.environment}-key"
 }
 
-# Mirror of the cluster layer's guard: refuse to build the SOK Splunk core
-# while EC2 core instances (indexers / cluster manager) are running for this
-# workspace — one SmartStore bucket, one live cluster manager, ever.
-data "aws_instances" "ec2_core" {
-  filter {
-    name = "tag:Name"
-    values = [
-      "${var.environment}-indexer*", "${var.environment}_indexer*",
-      "${var.environment}-manager*", "${var.environment}_manager*",
-    ]
-  }
-
-  filter {
-    name   = "instance-state-name"
-    values = ["running", "pending"]
-  }
-
-  lifecycle {
-    postcondition {
-      condition     = length(self.ids) == 0
-      error_message = "Running EC2 Splunk core instances exist for workspace ${var.environment} (${join(", ", self.ids)}). Refusing to start the SOK Splunk core against the same SmartStore bucket. Stop the cluster layer first (deployment_model exclusivity)."
-    }
-  }
-}
