@@ -1,6 +1,6 @@
 ###############################################################################
 # KV-store backup, an in-cluster CronJob backs up the SHC KV store to the
-# persistent kvbackup bucket (sok-foundation) every 6h via IRSA. SHC-only:
+# persistent kvbackup bucket (account layer) every 6h via IRSA. SHC-only:
 # dev's Standalone KV store is disposable (nightly destroy). Restore is manual /
 # start-workflow via scripts/sok-kvstore-restore.sh.
 #

@@ -7,7 +7,7 @@
 # created by the helm chart) gets S3 read + kms:Decrypt via this role, attached
 # through splunkOperator.annotations in the helm values (operator.tf).
 #
-# Apps bucket lives in the persistent sok-foundation layer; discovered here by
+# Apps bucket lives in the persistent account layer; discovered here by
 # naming convention (same as the SmartStore bucket).
 ###############################################################################
 
