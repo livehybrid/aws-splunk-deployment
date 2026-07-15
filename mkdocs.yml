@@ -44,6 +44,7 @@ nav:
   - Overview:
     - Overview: index.md
     - Getting started: getting-started.md
+    - FAQ: faq.md
     - LLD workbook: LLD-workbook.md
   - Guide:
     - Configuration reference: configuration.md
