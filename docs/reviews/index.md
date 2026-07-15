@@ -1,9 +1,14 @@
 # SOK implementation review
 
+!!! note "Reconciled to the SOK-only refactor (2026-07-15)"
+    This audit was run against the pre-refactor **hybrid** EC2+SOK codebase. The estate has since been refactored to **SOK-only**: the EC2 deployment model is deleted (the `cluster` Terraform layer, `packer/`, the `splunk_instance` module, the eight EC2 instance-profile IAM roles, the `splunk-*.yml` CI workflows, the `deployment_model` exclusivity guards), the `sok-foundation` layer is merged into `account` (SmartStore, apps and KV-backup buckets plus the HEC-token secret now live there, SmartStore created unconditionally), so the estate is now **four layers (account, iam, eks, sok)** not six. The web-ingress DNS local-exec is gone (replaced by `kubernetes_manifest` + native `aws_route53_record`), 41 EC2/hybrid variables are pruned, the EC2/PKI account secrets (`account/secrets.tf`) are removed, terraform-docs is added, and `terraform validate` passes on all four layers. Findings materially affected carry a bracketed `[SOK-only refactor 2026-07-15: …]` note on their Status line. **All `file:line` evidence points at the pre-refactor tree unless a finding is annotated.**
+
 A four-lens review of the Splunk Operator for Kubernetes build, **security, operations, deployment/IaC, and non-functional**, first run July 2026 after the dev multisite validation (RF/SF met, SmartStore SSE-KMS, KV backup/restore), and reviewed on `master` after that branch merged. A prod build-out test has since run (see [runbook](../kubernetes-sok-runbook.md)). Each lens was an independent deep pass; the Critical and top-High findings were re-verified against the code and live AWS before publishing.
 
 !!! success "Remediation status"
     Most findings have since been actioned, both Criticals (OPS-1, OPS-2) are **DONE**, along with ~20 others via the merged SOK branch plus a stream of finding-referenced commits. **Exact tally: DONE 22 · PARTIAL 20 · OPEN 9.** Each finding below now carries a status marker (**✅ DONE** / **◐ PARTIAL** / **○ OPEN**) with evidence. The at-a-glance table below counts *original* findings; the remaining code-change work is collected in [Remaining actions](#remaining-actions-code-changes-for-the-owner).
+
+    *SOK-only refactor 2026-07-15 (original tally unchanged, this is additive):* the refactor annotates **15 findings**, of which **3 are now resolved or N/A** (SEC-1 account-layer prod-secret read resolved plus its EC2 prod-SG residual N/A, DEP-6 exclusivity-guard finding N/A, DEP-9 version-skew resolved) and **12 are changed** (layer moves, pruned variables, deleted `cluster`/`sok-foundation` layers, repo rename, dropped EC2 comparisons: DEP-1, DEP-2, DEP-10, DEP-11, DEP-12, SEC-2, SEC-3, SEC-4, SEC-8, OPS-14, NFR-5, NFR-9). Per-dimension notes are in each file's reconciliation banner.
 
 ## At a glance (original findings, as first published)
 
@@ -28,7 +33,7 @@ The two Criticals and the top Highs were re-checked against the actual code / li
 - **OPS-1**, the stop-path roll selector `splunk-idxc-indexer` genuinely does not match the multisite pod labels `splunk-idxc-site1-indexer` / `-site2-indexer` (`pdb.tf:27` vs `:44`).
 - **OPS-2**, `sok-health.sh` is piped through `| tee` with no `shell: bash`, so the check step's exit code is always `tee`'s zero.
 - **SEC-1**, `secrets.tf:21,25` read `/monitoring/splunk/password` and `/splunk/pass4SymmKey` with no env in the path; both are prod-tagged.
-- **SEC-2**, the CI role trusts `repo:livehybrid/aws-splunk-cluster:*` (any ref) and holds `PowerUserAccess` + `iam:CreateRole`/`PassRole`.
+- **SEC-2**, the CI role trusts `repo:livehybrid/aws-splunk-cluster:*` (any ref; repo now renamed to `livehybrid/aws-splunk-deployment`) and holds `PowerUserAccess` + `iam:CreateRole`/`PassRole`.
 - **NFR-1**, one unconditional `resources` local (Burstable), despite the "Prod goes Guaranteed" comment.
 - **DEP-1 / DEP-10 / SEC-4**, no state locking; `prevent_destroy` on the KMS key only; no bucket versioning.
 
@@ -41,7 +46,7 @@ The same root causes surface across lenses, fixing each once closes several find
 1. **Single-shape tooling.** ✅ **RESOLVED.** The stop-path roll (OPS-1), health checks (OPS-6, DEP-13), and `make kexec` were all made shape-agnostic (label-selector CR discovery). Both the stop-path no-op and the tooling false-fails are closed.
 2. **Automation is now live on master.** ✅ **RESOLVED.** The branch merged to `origin/master`, so the nightly cron and dispatch exist server-side (OPS-3, DEP-4), and the validated multisite shape is committed at `_shared/vars/overlays/dev-multisite.tfvars` (OPS-9, DEP-3). Residual: confirm the first scheduled `sok-stop` fired.
 3. **Dev inside the prod VPC with prod secrets** (SEC-1, SEC-5). ◐ **PARTLY CLOSED.** Dev secrets are now env-scoped (`/dev/splunk/*`) and default-deny NetworkPolicies are in place (SEC-5 DONE); the prod SG tightening and dev-own-VPC/private-subnets remain OPEN (SEC-1 partial).
-4. **Supply-chain & version drift** (DEP-7, DEP-8, SEC-6, DEP-9). ◐ **MOSTLY CLOSED.** EKS module pinned exactly (21.24.0), addons carry explicit versions (DEP-7 DONE), splunk + alpine/k8s images digest-pinned (SEC-6/DEP-8 partial, `nodelocaldns` still tag-only), TF pinned 1.11.1 on SOK+CI (DEP-9 partial, EC2 workflows still 1.10.5).
+4. **Supply-chain & version drift** (DEP-7, DEP-8, SEC-6, DEP-9). ◐ **MOSTLY CLOSED.** EKS module pinned exactly (21.24.0), addons carry explicit versions (DEP-7 DONE), splunk + alpine/k8s images digest-pinned (SEC-6/DEP-8 partial, `nodelocaldns` still tag-only), TF pinned 1.11.1 on SOK+CI (DEP-9 partial, EC2 workflows still 1.10.5; *SOK-only refactor 2026-07-15: the `splunk-*.yml` EC2 workflows are deleted, so DEP-9 is resolved*).
 5. **The EKS 1.34 cost cliff** (NFR-4, OPS-8). ✅ **DONE (documented + owned).** Runbook now owns the 1.34→1.35 path, the 2026-12-02 cliff, a 2026-11-01 go/no-go, gated on SOK release. The upgrade execution itself is future work.
 6. **Prod-shape correctness gaps** (NFR-1 Guaranteed QoS, NFR-3 AZ SPOF, NFR-5 subnet IP exhaustion). ◐ **PARTLY CLOSED.** CNI IP-target config added (NFR-5 DONE), Guaranteed-QoS plumbing + SHC zone spread added (NFR-1/NFR-3 partial, prod tfvars still Burstable / no general-c, deliberately for the workload-free build-out).
 7. **State & data durability** (DEP-1 no locking, SEC-3/DEP-14 prod secrets in an unhardened dev state bucket, SEC-4/DEP-10 no bucket versioning or `prevent_destroy`). ◐ **PARTLY CLOSED.** State locking added (`use_lockfile`, DEP-1 DONE); versioning + `prevent_destroy` on smartstore + kvbackup (SEC-4/DEP-10 partial, the **apps** bucket was missed); dev state bucket still SSE-S3 (SEC-3/DEP-14 partial/open).
@@ -63,7 +68,7 @@ The same root causes surface across lenses, fixing each once closes several find
 
 ### P2, hardening & hygiene, mostly actioned
 
-✅ State locking (DEP-1) + ◐ Terraform 1.11.1 (DEP-9, EC2 workflows still 1.10.5); ◐ backend-env guard (DEP-2, workspace assert done, bucket assert open) + ◐ Makefile defaults (DEP-12, env=prod removed, still defaults apply, SOK layers no symlink); ✅ commit the multisite overlay (DEP-3, OPS-9); ✅ mirror the exclusivity guard into the eks layer (DEP-6); ✅ pin module/addon versions (DEP-7); ✅ PR fmt/validate/plan CI + drift check (DEP-11); ◐ prod-dispatch confirmation gate (DEP-5, typed confirm done, no required reviewers); ◐ stop-path timeouts + lock-timeout + fail-on-residual-volumes (OPS-12, done except job `timeout-minutes`); ✅ deterministic app tarballs (OPS-11); ✅ PVC right-sizing plumbing (NFR-6, per-role storage vars); ✅ restate the cost section at the EBS-inclusive ~$750/mo (NFR-9).
+✅ State locking (DEP-1) + ◐ Terraform 1.11.1 (DEP-9, EC2 workflows still 1.10.5; *SOK-only refactor 2026-07-15: resolved, EC2 workflows deleted*); ◐ backend-env guard (DEP-2, workspace assert done, bucket assert open); + ◐ Makefile defaults (DEP-12, env=prod removed, still defaults apply, SOK layers no symlink); ✅ commit the multisite overlay (DEP-3, OPS-9); ✅ mirror the exclusivity guard into the eks layer (DEP-6; *SOK-only refactor 2026-07-15: N/A, exclusivity guards deleted with the EC2 model*); ✅ pin module/addon versions (DEP-7); ✅ PR fmt/validate/plan CI + drift check (DEP-11); ◐ prod-dispatch confirmation gate (DEP-5, typed confirm done, no required reviewers); ◐ stop-path timeouts + lock-timeout + fail-on-residual-volumes (OPS-12, done except job `timeout-minutes`); ✅ deterministic app tarballs (OPS-11); ✅ PVC right-sizing plumbing (NFR-6, per-role storage vars); ✅ restate the cost section at the EBS-inclusive ~$750/mo (NFR-9).
 
 ## Remaining actions (code changes for the owner)
 
@@ -82,7 +87,7 @@ These are the still-**OPEN** code-change items (terraform / scripts / workflows)
 
 - **SEC-1 / SEC-2** (highest-severity, only partly closed): SEC-1's prod SG rules (HF `9997-9998` from `0.0.0.0/0`, HF `8088` / LM `8089` open to the VPC CIDR) are untouched; SEC-2 still carries `PowerUserAccess` + `iam:CreateRole`/`PassRole` with no permissions boundary. Trust-scoping and NetworkPolicies are the mitigations in place.
 - **SEC-4 / DEP-10**, the **apps** bucket was missed for both `prevent_destroy` and versioning (smartstore + kvbackup got both).
-- **DEP-9**, the EC2 `splunk-start`/`splunk-stop` workflows still pin Terraform `1.10.5` against a `1.11.1` estate.
+- **DEP-9**, the EC2 `splunk-start`/`splunk-stop` workflows still pin Terraform `1.10.5` against a `1.11.1` estate. *(SOK-only refactor 2026-07-15: resolved, these EC2 workflows are deleted.)*
 - **OPS-14**, the HEC token still regenerates each rebuild (`random_uuid`, not persisted to Secrets Manager); breaks external senders post-cutover.
 - **DEP-13**, no `concurrency:` key on `sok-checks` (can race the 21:30 stop).
 - **OPS-10**, `sok-rf-remediate.sh` exists but is not yet wired into `sok-checks.yml` between retries.

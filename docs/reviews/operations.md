@@ -3,8 +3,13 @@
 !!! info "Part of the [full SOK review](index.md)"
     July 2026 · **15 findings**, 2 Critical, 3 High, 7 Medium, 3 Low. Both Critical findings (OPS-1 stop-path no-op, OPS-2 always-green checks) re-verified against the code. See the [review index](index.md) for the prioritised remediation plan.
 
+!!! note "Reconciled to the SOK-only refactor (2026-07-15)"
+    This audit ran against the pre-refactor **hybrid** codebase. The estate is now **SOK-only**: the EC2 deployment model (the `cluster` layer, the `splunk-*.yml` cron workflows, the `deployment_model` exclusivity guards) is deleted, `sok-foundation` is merged into `account` (four layers: account, iam, eks, sok), and terraform-docs is added. Findings that leaned on EC2 comparison, the EC2 SNS alerting, or the EC2-running exclusivity postcondition are annotated per-finding below. **`file:line` evidence points at the pre-refactor tree unless annotated.**
+
 !!! success "Remediation status"
     **DONE 8 · PARTIAL 5 · OPEN 2.** Both Criticals closed. Per-finding markers below. Open code items: OPS-13. Partial residuals to note: OPS-7, OPS-10, OPS-12, OPS-14.
+
+    *SOK-only refactor 2026-07-15:* 1 finding annotated. OPS-14 (changed, the EC2-running exclusivity postcondition it flags is deleted, so the rollback-ordering wedge is N/A; the HEC-token residual stands). The remaining findings are SOK-internal and unchanged, though several evidence lines that compared against the now-deleted EC2 estate are historical.
 
 Reviewed: sok-start/stop/checks workflows, `terraform/layers/sok/*` + `eks/*` + `sok-foundation/*`, SOK scripts, shared tfvars, plan/ops docs. Originally verified against branch `sok/multisite-dev-validation` (now merged to master); a prod build-out test has since run.
 
@@ -122,7 +127,7 @@ Reviewed: sok-start/stop/checks workflows, `terraform/layers/sok/*` + `eks/*` + 
 
 ### [OPS-14] Prod-shape latent traps: HEC token rotates on every rebuild; CM is hard-pinned to one AZ; rollback ordering can wedge on the exclusivity guard
 - **Severity**: Low (prod-cutover era)
-- **Status**: ◐ **PARTIAL**, the CM-AZ failure mode and the mandatory rollback order are documented in the runbook (DONE). **Residual: the HEC token is still `random_uuid` (`secrets.tf:34,47`), not persisted to Secrets Manager, it still rotates on every rebuild.**
+- **Status**: ◐ **PARTIAL**, the CM-AZ failure mode and the mandatory rollback order are documented in the runbook (DONE). **Residual: the HEC token is still `random_uuid` (`secrets.tf:34,47`), not persisted to Secrets Manager, it still rotates on every rebuild.** [SOK-only refactor 2026-07-15: changed, the rollback-ordering-wedge leg (`main.tf:36-56` EC2-running exclusivity postcondition) is N/A, that guard is deleted with the EC2 model; the HEC-token-rotation and CM-AZ-pin residuals are unchanged, re-verify. Note the merged `account` layer is the natural home to persist the HEC token now.]
 - **Evidence**: `secrets.tf:32,45`, `random_uuid.hec_token` lives in the sok layer's state, which stop **destroys**, so any prod stop/start mints a new HEC token (fine in dev per the comment; breaks external senders post-cutover). `crs.tf:143` pins the CM with requiredDuringScheduling to eu-west-2a, a 2a outage leaves the CM unschedulable anywhere (no bucket fixups/bundle pushes until the AZ returns). `main.tf:36–56`'s EC2-running postcondition is evaluated on data-source reads, so a panicked rollback that starts EC2 *before* destroying the sok layer likely blocks the sok destroy itself (the plan's K7.3.6 order, destroy sok first, is the only safe path and should be stated as such).
 - **Recommendation**: Persist the HEC token (Secrets Manager, like the other secrets) before cutover; document the CM-AZ failure mode and the mandatory rollback order in the cutover runbook.
 - **Effort**: S
@@ -138,7 +143,7 @@ Reviewed: sok-start/stop/checks workflows, `terraform/layers/sok/*` + `eks/*` + 
 - The destroy ordering is genuinely well-engineered: PVC deletion while the CSI driver exists, an EBS-reclaim wait, eks retry, and a residual-cost verify that hard-fails (`sok-stop.yml` header + steps), plus `prevent_destroy` on the data KMS key and lifecycle rules (30d kvbackup expiry, multipart abort) in sok-foundation.
 - Probe overrides are deliberate and documented against bucket-corruption risk (~20-min startup budget, `crs.tf:12–37`); PDBs are shape-aware and correctly skip the 1-replica dev case (`pdb.tf:6–8`).
 - No static credentials anywhere: IRSA for SmartStore, App Framework, and KV backup, with derived trust policies that survive nightly OIDC-provider recreation.
-- The EC2/SOK exclusivity guard on both paths, the eks/sok layer split with concrete remote-state provider wiring, and symlinked shared tfvars (single source of truth) are all solid operational hygiene.
+- The EC2/SOK exclusivity guard on both paths (removed in the SOK-only refactor with the EC2 model), the eks/sok layer split with concrete remote-state provider wiring, and symlinked shared tfvars (single source of truth) are all solid operational hygiene.
 - Documentation depth is exceptional for a project this age, the plan's caveat register (§9) predicted several of the issues found here, including the exact stop-path failure in OPS-1.
 - The silent-401 trap awareness and in-pod password handling in `sok-health.sh` show real operational scar tissue applied consistently.
 

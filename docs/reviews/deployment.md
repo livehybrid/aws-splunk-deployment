@@ -3,16 +3,21 @@ y# Deployment & IaC review, SOK implementation
 !!! info "Part of the [full SOK review](index.md)"
     July 2026 · **15 findings**, 3 High, 10 Medium, 2 Low. High findings re-verified against code + live state buckets. See the [review index](index.md) for the prioritised remediation plan.
 
+!!! note "Reconciled to the SOK-only refactor (2026-07-15)"
+    This audit ran against the pre-refactor **hybrid** codebase. The estate is now **SOK-only**: the EC2 deployment model (the `cluster` layer, `packer/`, the `splunk_instance` module, the eight EC2 IAM roles, the `splunk-*.yml` workflows, the `deployment_model` guards) is deleted, `sok-foundation` is merged into `account` (four layers now, account/iam/eks/sok), the web-ingress DNS local-exec is replaced by `kubernetes_manifest` + native `aws_route53_record`, 41 EC2/hybrid variables are pruned, and terraform-docs is added. Any finding about the EC2 cron workflows, the exclusivity guards, `sok-foundation`, `var.account_id` or the DNS waiter is now moot or resolved, annotated per-finding below. **`file:line` evidence points at the pre-refactor tree unless annotated.**
+
 !!! success "Remediation status (reconciled 2026-07-14)"
     **DONE 6 · PARTIAL 7 · OPEN 2.** All three Highs closed (DEP-1 state locking, DEP-2 backend guard partial, DEP-3 overlay committed). Open: DEP-14, DEP-15. Per-finding markers below.
 
-Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok-foundation` in full, `_shared` variables/tfvars/Makefile/backend confs, `sok-*.yml` + `infracost.yml` + `splunk-*.yml` workflows, root Makefile. `terraform validate` passes on eks, sok, and sok-foundation. Live read-only checks were run against both state buckets, DynamoDB, and GitHub Actions.
+    *SOK-only refactor 2026-07-15:* 7 findings annotated. DEP-6 N/A (exclusivity guards deleted), DEP-9 resolved (EC2 workflows deleted), and DEP-1, DEP-2, DEP-10, DEP-11, DEP-12 changed (layer moves, pruned `var.account_id`, deleted `cluster`/`sok-foundation` layers).
+
+Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok-foundation` (now merged into `account`) in full, `_shared` variables/tfvars/Makefile/backend confs, `sok-*.yml` + `infracost.yml` + `splunk-*.yml` (removed in the SOK-only refactor) workflows, root Makefile. `terraform validate` passes on eks, sok, and sok-foundation (post-refactor: on all four layers account, iam, eks, sok). Live read-only checks were run against both state buckets, DynamoDB, and GitHub Actions.
 
 ## Findings
 
 ### [DEP-1] No Terraform state locking anywhere, S3 backends have neither DynamoDB nor `use_lockfile`
 - **Severity**: High
-- **Status**: ✅ **DONE**, `use_lockfile = true` is now in both `dev.backend.conf:5` and `prod.backend.conf:5` (S3-native locking, TF ≥1.11), with an inline DEP-1 citation; no DynamoDB table (correct). Both confs are symlinked into all six layers.
+- **Status**: ✅ **DONE**, `use_lockfile = true` is now in both `dev.backend.conf:5` and `prod.backend.conf:5` (S3-native locking, TF ≥1.11), with an inline DEP-1 citation; no DynamoDB table (correct). Both confs are symlinked into all six layers. [SOK-only refactor 2026-07-15: changed, now the four layers (account, iam, eks, sok); the `splunk-stop.yml` EC2 cron cited in Impact is removed, so that race vector is gone, but S3-native locking is still the correct fix and stands.]
 - **Evidence**: `_shared/conf/dev.backend.conf:1-3` and `prod.backend.conf:1-3` set only `bucket`/`region`/`encrypt`; backend blocks in all six layers add only `key`. Repo-wide search for `use_lockfile`/`dynamodb_table`: zero hits. Live: `aws dynamodb list-tables` shows no lock table.
 - **Impact**: The nightly `splunk-stop.yml` cron (21:30 UTC, `apply -auto-approve`) and sok-stop cron execute unattended against the same states a human uses locally. GitHub concurrency groups only serialize workflows, a local `terraform apply` at 21:30 races the CI destroy with zero locking; two writers on one state = corrupted/lost-update.
 - **Recommendation**: Add `use_lockfile = true` to both backend confs (S3-native locking, TF ≥1.10). No DynamoDB needed.
@@ -20,7 +25,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-2] Wrong-backend init is completely unguarded, the exact near-miss class has no protection
 - **Severity**: High
-- **Status**: ◐ **PARTIAL**, a symlinked `_shared/checks.tf` in all six layers asserts `terraform.workspace == var.environment` (DONE-ish). **Residual: it does NOT assert `backend.config.bucket == var.state_bucket` (the exact near-miss vector), and there is no `-reconfigure` in the Makefile init.**
+- **Status**: ◐ **PARTIAL**, a symlinked `_shared/checks.tf` in all six layers asserts `terraform.workspace == var.environment` (DONE-ish). **Residual: it does NOT assert `backend.config.bucket == var.state_bucket` (the exact near-miss vector), and there is no `-reconfigure` in the Makefile init.** [SOK-only refactor 2026-07-15: changed, `var.account_id` (the "declared but never referenced" evidence) is one of the 41 pruned variables, so that specific point is moot; the `checks.tf` guard now lives across the four layers; the residual bucket-assertion gap is unchanged, re-verify.]
 - **Evidence**: Backend bucket comes from `conf/<env>.backend.conf` at init; workspace and tfvars chosen separately. `var.account_id` is declared (`_shared/variables.tf:15-18`, set in both tfvars) but **never referenced** (grep: zero uses). `var.state_bucket` is used only for `terraform_remote_state` reads, making failure worse: init account layer against dev backend with prod tfvars and remote-state reads still fetch correct prod outputs, so the empty-state "create everything" plan looks internally consistent. Both envs share account 123456789012, so an account-identity check can't discriminate, only the bucket can.
 - **Impact**: One skipped Makefile invocation (raw `terraform init`) from applying a duplicate prod estate. Caught by human plan-reading last time; nothing structural prevents a repeat.
 - **Recommendation**: Symlinked `checks.tf` in every layer asserting initialized backend bucket == `var.state_bucket`: `check "backend_matches_env" { assert { condition = !fileexists(".terraform/terraform.tfstate") || jsondecode(file(".terraform/terraform.tfstate")).backend.config.bucket == var.state_bucket } }`. Fails every plan/apply where conf-file and tfvars disagree. Also `terraform init -reconfigure` in the Makefile.
@@ -52,7 +57,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-6] Exclusivity guard gaps: the eks layer is unguarded, and a stranded EKS cluster then blocks the nightly EC2 prod stop
 - **Severity**: Medium
-- **Status**: ✅ **DONE**, `eks/main.tf:34-56` now mirrors the `aws_instances.ec2_core` postcondition guard, so the eks layer refuses to apply while EC2 core instances run.
+- **Status**: ✅ **DONE**, `eks/main.tf:34-56` now mirrors the `aws_instances.ec2_core` postcondition guard, so the eks layer refuses to apply while EC2 core instances run. [SOK-only refactor 2026-07-15: N/A, the EC2 deployment model and the `deployment_model` exclusivity guards are deleted, there is no EC2 core to strand or block, so this entire class no longer applies.]
 - **Evidence**: Guards exist and mirror: `cluster/deployment_model.tf:37-44` (no ec2-core plan while `splunk-sok-<env>` exists) and `sok/main.tf:36-56` (no sok while `<env>-indexer*`/`-manager*` EC2 running, patterns match the real `prod_indexer_a_0` tag scheme). BUT: (a) the **eks layer reads `deployment_model` nowhere and has no guard**, `sok-start` on prod while EC2 runs applies the whole EKS cluster first, then fails in sok; the stray `splunk-sok-prod` cluster now trips `deployment_model.tf:40` and **fails the nightly `splunk-stop` prod apply** (core_on=1) → prod EC2 runs all night + orphan EKS bills. (b) Both guards are plan-time postconditions on data sources nothing depends on, so `terraform apply -target=` skips them. (c) No state locking = unlocked TOCTOU.
 - **Impact**: One wrong-env start produces the exact stuck state the guards exist to prevent, and disables cost-containment until hand-cleaned.
 - **Recommendation**: Duplicate the `aws_instances` postcondition into the eks layer (or a sok-start pre-flight); document "-target skips the guards"; soften the cluster-layer guard to only fail when core capacity is actually being created so shutdown applies can't be blocked.
@@ -76,7 +81,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-9] Terraform version skew across the pipeline can wedge the nightly stop
 - **Severity**: Medium
-- **Status**: ◐ **PARTIAL**, root `.terraform-version = 1.11.1` and the sok-* + terraform-ci workflows pin `1.11.1` (DONE). **Residual: the EC2 `splunk-start.yml:31` / `splunk-stop.yml:37` still pin `1.10.5`, so skew against the 1.11.1 estate persists.**
+- **Status**: ◐ **PARTIAL**, root `.terraform-version = 1.11.1` and the sok-* + terraform-ci workflows pin `1.11.1` (DONE). **Residual: the EC2 `splunk-start.yml:31` / `splunk-stop.yml:37` still pin `1.10.5`, so skew against the 1.11.1 estate persists.** [SOK-only refactor 2026-07-15: resolved, the `splunk-*.yml` EC2 workflows (the sole residual source of skew) are deleted, and the `cluster`/`sok-foundation` layers cited for the `.terraform-version` gap no longer exist; the surviving four layers pin 1.11.1.]
 - **Evidence**: sok-start/stop pin TF **1.11.1**; splunk-start/stop pin **1.10.5**; `_shared/.terraform-version` (symlinked into account/iam/cluster only) says **1.10.5**; eks/sok/sok-foundation have **no** `.terraform-version` symlink, so local runs use whatever is installed; `required_version = ">= 1.10, < 2.0"` accepts anything.
 - **Impact**: Terraform refuses state written by a newer CLI. A local apply with TF ≥1.11 makes that night's `splunk-stop` (1.10.5) fail, the cost guard silently stops guarding.
 - **Recommendation**: Standardize on 1.11.1 everywhere (workflows, `.terraform-version`, new-layer symlinks). Unlocks `use_lockfile` GA (DEP-1).
@@ -84,7 +89,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-10] `prevent_destroy` covers only the KMS key, none of the three "must outlive every teardown" buckets
 - **Severity**: Medium
-- **Status**: ◐ **PARTIAL**, `prevent_destroy` added to smartstore (`smartstore.tf:94`) and kvbackup (`kvbackup.tf:38`). **Residual: the apps bucket still has no `prevent_destroy` (`apps.tf`).**
+- **Status**: ◐ **PARTIAL**, `prevent_destroy` added to smartstore (`smartstore.tf:94`) and kvbackup (`kvbackup.tf:38`). **Residual: the apps bucket still has no `prevent_destroy` (`apps.tf`).** [SOK-only refactor 2026-07-15: changed, the three buckets moved from the deleted `sok-foundation` layer into `account` (merged); the apps-bucket `prevent_destroy` gap is unchanged, re-verify in `account`.]
 - **Evidence**: `sok-foundation/smartstore.tf:33-36` (KMS key prevent_destroy) is the only lifecycle protection. `aws_s3_bucket.smartstore`/`apps`/`kvbackup` have none, despite the layer header stating "the bucket must outlive every teardown". No bucket versioning either.
 - **Impact**: Today's only shield is implicit `BucketNotEmpty` (no `force_destroy`). A refactor that plans bucket replacement, or a targeted destroy, deletes an empty-enough bucket; kvbackup objects expire at 30 days so it trends toward deletable.
 - **Recommendation**: Add `lifecycle { prevent_destroy = true }` to all three buckets; consider versioning on kvbackup.
@@ -92,7 +97,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-11] No plan/validate CI at all; targeted-apply drift is never verified post-hoc
 - **Severity**: Medium
-- **Status**: ✅ **DONE**, `terraform-ci.yml` runs PR-time `fmt -check -recursive` + per-layer backendless `validate` (all six) + shellcheck; a post-apply drift check runs in `sok-start.yml:117-135` (`-detailed-exitcode`, warn).
+- **Status**: ✅ **DONE**, `terraform-ci.yml` runs PR-time `fmt -check -recursive` + per-layer backendless `validate` (all six) + shellcheck; a post-apply drift check runs in `sok-start.yml:117-135` (`-detailed-exitcode`, warn). [SOK-only refactor 2026-07-15: changed, `validate` now covers the four layers (account, iam, eks, sok), not six; the `cluster` layer in the `standard_terraform_layers` evidence is deleted, and a terraform-docs freshness check was added to CI.]
 - **Evidence**: Only PR workflow touching terraform is `infracost.yml` (costing). No `fmt -check`/`validate`/`plan` for any layer; root `Makefile:20` `standard_terraform_layers := account iam cluster` excludes eks/sok/sok-foundation. Debugging used `-target` applies; nothing asserts a clean full plan afterwards. First execution of merged code is `apply -auto-approve` in sok-start.
 - **Impact**: A tfvars typo, provider deprecation, or leftover targeted-apply drift is discovered at 06:00 by a failed auto-approve apply in the only environment.
 - **Recommendation**: PR workflow: `fmt -check` + `validate` for all six layers, plus OIDC `plan -detailed-exitcode` on changed layers. Add "plan must be empty" step at end of sok-start (fail on exitcode 2).
@@ -100,7 +105,7 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ### [DEP-12] `_shared/Makefile` defaults to `env=prod` + `tf-command=apply`; the three SOK layers lack the guarded Makefile entry point
 - **Severity**: Medium
-- **Status**: ◐ **PARTIAL**, the `env = prod` default is removed (`_shared/Makefile:5`; `guard-env` now forces an explicit env) (DONE). **Residual: `tf-command` still defaults to `apply` (not `plan`), and eks/sok/sok-foundation still have no `Makefile` symlink.**
+- **Status**: ◐ **PARTIAL**, the `env = prod` default is removed (`_shared/Makefile:5`; `guard-env` now forces an explicit env) (DONE). **Residual: `tf-command` still defaults to `apply` (not `plan`), and eks/sok/sok-foundation still have no `Makefile` symlink.** [SOK-only refactor 2026-07-15: changed, `sok-foundation` is merged into `account`; the residual (default `tf-command = apply`, plus any missing Makefile symlink on eks/sok) is unchanged, re-verify.]
 - **Evidence**: `_shared/Makefile:1-3`, `tf-command = apply`, `env = prod`. So `make -C terraform/layers/cluster terraform` with no args passes `guard-env` and runs **apply against prod**. eks/sok/sok-foundation have no `Makefile` symlink, so the only local path for the newest, most-hand-driven layers is raw `terraform`, the mode that produced DEP-2.
 - **Impact**: A muscle-memory `make terraform` applies prod; the layers where env-consistency helps most don't have it.
 - **Recommendation**: Delete `env = prod` default; default `tf-command = plan`; add `Makefile`/`.terraform-version` symlinks to the three SOK layers.
@@ -132,8 +137,8 @@ Scope reviewed: all six layers' backend/provider/version files, `eks`/`sok`/`sok
 
 ## Strengths (brief)
 - Clean layer/state separation with per-layer keys; the alekc/kubectl eager-config constraint correctly engineered around (CRDs/operator in sok, provider host from remote-state) and documented in place.
-- All six layers commit `.terraform.lock.hcl` (aws 6.54.0, kubectl 2.4.1 exact); CRDs vendored with source URL + sha256 + coupled-bump instruction; ALB IAM policy vendored at a stated version.
-- Both exclusivity guards exist and their EC2 Name-tag patterns match the real scheme; stop ordering (sok → EBS-reclaim wait → eks → residual verify with hard fail) is thoughtful.
+- All six layers (post-refactor: the four layers account, iam, eks, sok) commit `.terraform.lock.hcl` (aws 6.54.0, kubectl 2.4.1 exact); CRDs vendored with source URL + sha256 + coupled-bump instruction; ALB IAM policy vendored at a stated version.
+- Both exclusivity guards exist and their EC2 Name-tag patterns match the real scheme (removed in the SOK-only refactor along with the EC2 model); stop ordering (sok → EBS-reclaim wait → eks → residual verify with hard fail) is thoughtful.
 - Shared `splunk-power-<env>` concurrency across EC2 and SOK; OIDC-only auth; IRSA everywhere with derived trust policies; state buckets versioned + public-access-blocked.
 - Infracost wired per layer × workspace including the staged prod SOK projects.
 
