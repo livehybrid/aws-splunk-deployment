@@ -7,14 +7,12 @@
 ###############################################################################
 
 environment  = "dev"
-account_id   = "123456789012"
 profile      = "default"
 state_bucket = "livehybrid-splunk-dev-terraform"
 
 # Dev has its own Route53 zone — delegate splunk.dev.livehybrid.com at the
 # registrar the same way as prod (NS records to the new zone).
 create_dns             = true
-dns_base_domain        = "splunk.dev.livehybrid.com"
 dns_base_splunk_domain = "splunk.dev.livehybrid.com"
 
 # Separate /24 from prod.
@@ -23,19 +21,7 @@ default_subnet_a_cidr = "192.168.20.0/26"
 default_subnet_b_cidr = "192.168.20.64/26"
 default_subnet_c_cidr = "192.168.20.128/26"
 
-splunk_ami     = "" # TODO: dev AMI ID (rebuild via packer for dev workspace)
-splunk_version = "10.4.0"
-splunk_build   = "f798d4d49089"
 
-pki_cn_name = "splunk.dev.livehybrid.com"
-ssl_config = {
-  ssl_country = "GB"
-  ssl_state   = "England"
-  ssl_city    = "London"
-  ssl_org     = "LiveHybrid"
-  ssl_orgunit = "Splunk-Dev"
-  ssl_email   = "splunk@livehybrid.com"
-}
 
 ###############################################################################
 # Deployment model: dev runs the SOK (Splunk Operator for Kubernetes) path —
@@ -44,8 +30,6 @@ ssl_config = {
 # sok_accept_splunk_general_terms is MANDATORY for Splunk 10.x containers:
 # https://www.splunk.com/en_us/legal/splunk-general-terms.html
 ###############################################################################
-deployment_model                = "sok"
-sok_edge_on_ec2                 = false
 sok_accept_splunk_general_terms = "--accept-sgt-current-at-splunk-com"
 
 # Env-scoped secrets (SEC-1): dev pods hold DEV credentials only — never the
@@ -93,15 +77,7 @@ eks_node_groups = {
 }
 
 # Same roles enabled as prod, but SHC suppressed (1 SH is fine for dev).
-enable_splunk_manager            = 1
-enable_splunk_deployer           = 1
-enable_splunk_license            = 1
-enable_splunk_monitoring_console = 1
-enable_splunk_indexer            = 1
-enable_splunk_searchhead         = 1
 enable_shc                       = false
-enable_splunk_forwarder          = 1
-enable_smartstore                = 1
 
 # S0a min-shape: a single indexer (RF=1/SF=1) to keep dev infra cost minimal.
 # The operator MAY floor single-site clusters at 3 peers (docs: "minimum 3") —
@@ -109,38 +85,11 @@ enable_smartstore                = 1
 replication_factor        = 1
 search_factor             = 1
 sok_indexer_replicas      = 1
-indexer_cache_volume_size = 30
-use_spot                  = true
 
-custom_instance_type_indexer            = "t3.large"
-custom_instance_type_searchhead         = "t3.large"
-custom_instance_type_manager            = "t3.medium"
-custom_instance_type_deployer           = "t3.medium"
-custom_instance_type_license            = "t3.medium"
-custom_instance_type_monitoring_console = "t3.medium"
-custom_instance_type_heavy-forwarder    = "t3.medium"
 
-scale_splunk_indexer = {
-  eu-west-2a = 1
-  eu-west-2b = 0
-  eu-west-2c = 0
-}
 
-scale_splunk_searchhead = {
-  eu-west-2a = 1
-  eu-west-2b = 0
-  eu-west-2c = 0
-}
 
-scale_splunk_forwarder = {
-  eu-west-2a = 1
-  eu-west-2b = 0
-  eu-west-2c = 0
-}
 
-apps_git_repo         = "github.com/livehybrid/splunk-apps.git"
-splunk_admin_username = "splunkadmin"
-slack_alerts_channel  = "#splunk-alerts-dev"
 
 trusted_cidrs = [
   "82.30.10.70/32",
@@ -154,12 +103,8 @@ trusted_cidrs = [
   "165.225.198.0/23",
 ]
 
-hec_trusted_cidrs = [
-  "82.30.10.70/32",
-]
 
 # Flip to true once every node holds an internal-CA-issued cert (see README TLS section).
-ssl_verify_server_cert = false
 
 ###############################################################################
 # External Splunk Web (opt-in) — put an internet-facing ALB in front of the SOK
