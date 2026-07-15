@@ -135,6 +135,12 @@ Two separate things provide ordering:
 So the iteration you saw in the output is the plan scan listing each CR that will
 change, and the ordering is Terraform's graph plus the optional staged rollout.
 
+To be clear, it **does** perform the apply, it is not only a checker: the plan and
+the confirmation are the safety wrapper around a real `terraform apply` of the
+`sok` layer. And it only covers **Terraform-managed** things (the CRs and their
+topology). App or built-in-app changes (like the MC lookup sharing above) go
+through the App Framework or a runtime REST call, never through `sok-apply`.
+
 ### If I push a new app to the search heads, does it restart them all at once, or roll?
 
 Rolling, for a search-head cluster. The App Framework lands the app on the
@@ -188,23 +194,33 @@ The CRD is the reference:
 
 ### The MC saw the new indexer, but the SplunkAdmins search that auto-updates the MC config did not apply. Why?
 
-That saved search rebuilds the monitoring console's distributed-search
-configuration when peers change, and it depends on a **lookup that must be shared
-globally** (exported to `system`). If the lookup is only app- or user-scoped, the
-search cannot read or write it across the MC app context and the auto-apply
-silently does nothing, which is what you saw. The fix is in the vendored MC app
-(in the `splunk-apps` repo, not this one): set the lookup's sharing to global in
-the app's `default.meta`, for example
+The SplunkAdmins search rebuilds the monitoring console's distributed-search
+config when peers change, and it does `| lookup dmc_assets ...` several times.
+`dmc_assets` is owned by the built-in `splunk_monitoring_console` app, and the
+search runs in the **SplunkAdmins** app context, so unless `dmc_assets` is shared
+**globally** the `| lookup` cannot resolve it and the search fails. That, not a
+SplunkAdmins-side lookup, is the gap.
 
-```ini
-[lookups/<the_lookup>]
-export = system
-```
+The wrinkle is that `splunk_monitoring_console` is a **default Splunk app baked
+into the image**, not something we push through the S3 App Framework, so you
+cannot just edit its metadata in git. What you need is to make the `dmc_assets`
+lookup definition and its table file global (`export = system`, or ACL
+`sharing=global`, on both `data/transforms/lookups/dmc_assets` and
+`data/lookup-table-files/dmc_assets`). Under the nightly-rebuild model a hand-set
+ACL is ephemeral, so deliver it as config that re-applies on every build. Two
+options:
 
-then redeliver the MC app through the App Framework with `make sok-deploy-apps
-env=dev scope=mc` (this is an app change, so it goes via `sok-deploy-apps`, not
-`sok-apply`), which restarts the MC pod once and picks up the corrected sharing.
-This is a real bug worth fixing at source.
+- **A setup app in the `mc-apps/` App Framework prefix** (which the MC CR already
+  pulls): a tiny app that on startup POSTs the ACL change to global, idempotently,
+  so it self-heals on every rebuild. No image build, fits what we already have.
+  This is the recommended route.
+- **Bake a `local.meta` into a custom MC image**: extend `splunk/splunk` with
+  `etc/apps/splunk_monitoring_console/metadata/local.meta` setting the sharing.
+  Most durable and image-controlled, but adds an image build to the pipeline.
+
+Either way this is a `splunk-apps` / runtime change, **not** a Terraform CR
+change, so it ships via the App Framework (`make sok-deploy-apps scope=mc`) or a
+runtime REST call, not `make sok-apply`.
 
 ## Data and lifecycle
 
