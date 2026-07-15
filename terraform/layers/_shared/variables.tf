@@ -12,11 +12,6 @@ variable "environment" {
   description = "Workspace name: prod, dev, etc."
 }
 
-variable "account_id" {
-  description = "Target AWS account ID."
-  default     = ""
-}
-
 variable "profile" {
   description = "Local AWS CLI profile to assume when applying."
 }
@@ -48,107 +43,23 @@ variable "create_dns" {
 # DNS / TLS
 ###############################################################################
 
-variable "dns_base_domain" {
-  description = "Public base domain for Splunk URLs, e.g. splunk.livehybrid.com."
-  default     = "splunk.internal"
-}
-
 variable "dns_base_splunk_domain" {
   description = "Internal (cluster-mesh) base domain for Splunk roles, e.g. internal.splunk.livehybrid.com."
   default     = "splunk.internal"
-}
-
-variable "pki_cn_name" {
-  description = "Common name on the cluster's PKI CA."
-  default     = "splunk.internal"
-}
-
-variable "ssl_config" {
-  type = map(string)
-  default = {
-    ssl_country = "GB"
-    ssl_state   = "Your State"
-    ssl_city    = "Your City"
-    ssl_org     = "LiveHybrid"
-    ssl_orgunit = "Splunk"
-    ssl_email   = "splunk@livehybrid.com"
-  }
-}
-
-variable "sso_admin_ad_guid" {
-  description = "SAML group GUID for Splunk admin role (Azure AD or equivalent IdP)."
-  default     = ""
 }
 
 ###############################################################################
 # Splunk AMI + version
 ###############################################################################
 
-variable "splunk_ami" {
-  description = "AMI ID for Splunk Enterprise nodes (built by packer/splunk)."
-  default     = ""
-}
-
-variable "splunk_version" {
-  default = "10.0.0"
-}
-
-variable "splunk_build" {
-  default = ""
-}
-
 ###############################################################################
 # Feature toggles (C3 roles)
 ###############################################################################
-
-variable "enable_splunk_manager" {
-  description = "Cluster Manager (formerly Cluster Master)."
-  default     = 1
-}
-
-variable "enable_splunk_deployer" {
-  description = "Dedicated SHC Deployer."
-  default     = 1
-}
-
-variable "enable_splunk_license" {
-  description = "License Manager."
-  default     = 1
-}
-
-variable "enable_splunk_monitoring_console" {
-  description = "Dedicated Monitoring Console."
-  default     = 1
-}
-
-variable "enable_splunk_indexer" {
-  default = 1
-}
-
-variable "enable_splunk_searchhead" {
-  default = 1
-}
 
 variable "enable_shc" {
   description = "True for a 3-member Search Head Cluster; false for a standalone SH (dev)."
   type        = bool
   default     = true
-}
-
-variable "enable_splunk_forwarder" {
-  description = "Heavy Forwarder ingestion tier."
-  default     = 1
-}
-
-variable "enable_smartstore" {
-  description = "Use S3 SmartStore for warm/cold indexer storage."
-  default     = 1
-}
-
-variable "use_spot" {
-  description = "Launch all Splunk instances as Spot to cut cost. Reclaim risk acceptable for dev/test; SmartStore makes recovery a cluster rejoin, not a data restore."
-  type        = bool
-  default     = false
 }
 
 variable "enable_vpc_endpoints" {
@@ -157,18 +68,9 @@ variable "enable_vpc_endpoints" {
   default     = false
 }
 
-variable "enable_fips" {
-  description = "Enable FIPS-compliant TLS on Splunk daemons."
-  default     = "0"
-}
-
 ###############################################################################
 # Sizing
 ###############################################################################
-
-variable "splunk_admin_username" {
-  default = "splunkadmin"
-}
 
 variable "replication_factor" {
   default = 3
@@ -209,147 +111,27 @@ variable "data_volume_filesystem" {
   default = "xfs"
 }
 
-variable "indexer_cache_volume_size" {
-  description = "Per-indexer hot/warm cache EBS size in GB."
-  default     = 700
-}
-
-variable "custom_instance_type_indexer" {
-  default = "m6i.2xlarge"
-}
-
-variable "custom_instance_type_searchhead" {
-  default = "m6i.xlarge"
-}
-
-variable "custom_instance_type_manager" {
-  default = "m6i.large"
-}
-
-variable "custom_instance_type_deployer" {
-  default = "m6i.large"
-}
-
-variable "custom_instance_type_license" {
-  default = "m6i.large"
-}
-
-variable "custom_instance_type_monitoring_console" {
-  default = "m6i.large"
-}
-
-variable "custom_instance_type_heavy-forwarder" {
-  default = "c6i.xlarge"
-}
-
 ###############################################################################
 # Scale (per-AZ)
 #
 # For dev workspaces, set b and c to 0 to collapse to single-AZ.
 ###############################################################################
 
-variable "scale_splunk_indexer" {
-  type = map(string)
-  default = {
-    eu-west-2a = 1
-    eu-west-2b = 1
-    eu-west-2c = 1
-  }
-}
-
-variable "scale_splunk_searchhead" {
-  type = map(string)
-  default = {
-    eu-west-2a = 1
-    eu-west-2b = 1
-    eu-west-2c = 1
-  }
-}
-
-variable "scale_splunk_forwarder" {
-  type = map(string)
-  default = {
-    eu-west-2a = 1
-    eu-west-2b = 1
-    eu-west-2c = 0
-  }
-}
-
 ###############################################################################
 # Alerting
 ###############################################################################
-
-variable "slack_alerts_channel" {
-  description = "Slack channel for ops alerts."
-  default     = "#splunk-alerts"
-}
 
 ###############################################################################
 # Ingestion / git
 ###############################################################################
 
-variable "apps_git_repo" {
-  description = "Git repo URL for Splunk apps (consumed by Deployer + Cluster Manager). HTTPS form; credentials in /git/login Secrets Manager entry."
-  default     = ""
-}
-
-variable "hec_trusted_cidrs" {
-  type    = list(string)
-  default = []
-}
-
-variable "forwarder_consumer_principals" {
-  description = "Optional cross-account AWS principal ARNs allowed to consume the HF VPC Endpoint Service. Empty list = endpoint service not created."
-  type        = list(string)
-  default     = []
-}
-
-variable "custom_s3_bucket_access" {
-  description = "Extra S3 bucket ARNs the indexers/HFs need write access to."
-  default     = []
-  type        = list(string)
-}
-
-variable "custom_s3_vpce_permissions" {
-  default = []
-  type    = list(string)
-}
-
 ###############################################################################
 # Module-internal
 ###############################################################################
 
-variable "zip_output_file_mode" {
-  description = "https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/archive_file#output_file_mode"
-  default     = "0777"
-}
-
-variable "ssl_verify_server_cert" {
-  description = "splunkd sslVerifyServerCert. Flip to true only after `make health` is green AND every node's cert chains to the internal CA (no self-signed fallback in any /var/tmp/startup.log)."
-  type        = bool
-  default     = false
-}
-
 ###############################################################################
 # Deployment model (EC2 vs Splunk Operator for Kubernetes)
 ###############################################################################
-
-variable "deployment_model" {
-  description = "Which deployment model runs this workspace's Splunk core: \"ec2\" (the cluster layer: ASGs + bootstrap, the original build) or \"sok\" (the eks + sok layers: Splunk Operator for Kubernetes on EKS). The two are mutually exclusive per workspace — they share one SmartStore bucket, which must only ever have one live cluster manager. Guards in both paths enforce this. See docs/kubernetes-sok-plan.md."
-  type        = string
-  default     = "ec2"
-
-  validation {
-    condition     = contains(["ec2", "sok"], var.deployment_model)
-    error_message = "deployment_model must be \"ec2\" or \"sok\"."
-  }
-}
-
-variable "sok_edge_on_ec2" {
-  description = "When deployment_model = \"sok\": keep the heavy-forwarder edge tier running on EC2 (hybrid mode — SOK has no HF/DS CRD). Ignored when deployment_model = \"ec2\". Edge HFs must be repointed at the SOK S2S NLB (no indexer discovery on Kubernetes)."
-  type        = bool
-  default     = true
-}
 
 ###############################################################################
 # SOK (eks + sok layers) — only read when deployment_model = "sok"
@@ -497,12 +279,6 @@ variable "eks_console_admin_principal_arns" {
   description = "IAM principal ARNs granted AmazonEKSClusterAdminPolicy via EKS access entries so the AWS Console can browse Kubernetes objects (authentication_mode=API trusts NOBODY by default — not even root). Terraform-managed, so the grant survives the nightly rebuild."
   type        = list(string)
   default     = []
-}
-
-variable "sok_foundation_create_smartstore" {
-  description = "Whether sok-foundation CREATES the SmartStore bucket + KMS key. dev: true (no account layer ever ran for dev — foundation owns them). prod: false — the ACCOUNT layer already owns the live prod SmartStore bucket/key, and creating same-named resources would collide; foundation then manages only the apps + kvbackup buckets (SSE-KMS'd with the EXISTING prod key, discovered by alias)."
-  type        = bool
-  default     = true
 }
 
 variable "sok_network_policies_enabled" {
