@@ -1,0 +1,118 @@
+###############################################################################
+# Splunk CHECKS — run the smoke test (AWS-side) and cluster health check
+# (Splunk-side via SSM) against a workspace.
+#
+# Triggers:
+#   - manually (Actions tab), choosing env and which checks;
+#   - automatically after a successful "Splunk START (bring up cluster)" run,
+#     with retries to ride out the ~6-8 min bootstrap window.
+#
+# Uses the same AWS_TERRAFORM_ROLE_ARN repo variable as start/stop.
+###############################################################################
+name: Splunk CHECKS (smoke + health)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to check"
+        type: choice
+        options: [prod, dev]
+        default: prod
+      checks:
+        description: "Which checks to run"
+        type: choice
+        options: [both, smoke, health]
+        default: both
+  workflow_run:
+    workflows: ["Splunk START (bring up cluster)"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  # workflow_run carries no inputs; default to prod there.
+  TARGET_ENV: ${{ inputs.env || 'prod' }}
+  CHECKS: ${{ inputs.checks || 'both' }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    # On workflow_run, only proceed if the START run actually succeeded.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then
+            echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then
+            echo "::warning ::AWS_TERRAFORM_ROLE_ARN found in Secrets - consider moving it to Variables (an ARN is not sensitive)."
+            echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else
+            echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: github-actions-splunk-checks-${{ github.run_id }}
+
+      - name: Smoke test (AWS-side)
+        if: ${{ env.CHECKS != 'health' }}
+        shell: bash # explicit => pipefail on; default shell would let `| tee` mask failures
+        run: |
+          # After an automated START, bootstrap + RF/SF convergence on legacy
+          # SmartStore buckets can take 20+ min — retry, with a one-shot RF
+          # remediation (rolling restart) if fixups stall mid-window.
+          ATTEMPTS=1
+          [ "${{ github.event_name }}" = "workflow_run" ] && ATTEMPTS=12
+          for i in $(seq 1 $ATTEMPTS); do
+            if ./scripts/smoke-test.sh "$TARGET_ENV" | tee /tmp/smoke.log; then
+              break
+            elif [ "$i" = "$ATTEMPTS" ]; then
+              FAILED_SMOKE=1
+            else
+              if [ "$i" = "4" ]; then
+                ./scripts/rf-remediate.sh "$TARGET_ENV" || true
+              fi
+              echo "smoke attempt $i failed; retrying in 120s"; sleep 120
+            fi
+          done
+          echo "## Smoke test ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/smoke.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          [ -z "${FAILED_SMOKE:-}" ]
+
+      - name: Cluster health (Splunk-side via SSM)
+        if: ${{ env.CHECKS != 'smoke' }}
+        shell: bash # explicit => pipefail on
+        run: |
+          ATTEMPTS=1
+          [ "${{ github.event_name }}" = "workflow_run" ] && ATTEMPTS=12
+          for i in $(seq 1 $ATTEMPTS); do
+            if ./scripts/cluster-health.sh "$TARGET_ENV" | tee /tmp/health.log; then
+              break
+            elif [ "$i" = "$ATTEMPTS" ]; then
+              FAILED_HEALTH=1
+            else
+              echo "health attempt $i failed; retrying in 120s"; sleep 120
+            fi
+          done
+          echo "## Cluster health ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/health.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          [ -z "${FAILED_HEALTH:-}" ]

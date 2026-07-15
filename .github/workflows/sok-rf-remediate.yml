@@ -1,0 +1,62 @@
+###############################################################################
+# SOK RF REMEDIATE — fix the SmartStore cold-boot RF/SF stall on the SOK
+# indexer cluster (make sok-rf-remediate -> scripts/sok-rf-remediate.sh). A
+# safe no-op when the cluster is already at replication + search factor, so it
+# is low risk to run any time (e.g. after a nightly rebuild that came up with
+# fixups stalled on legacy SmartStore buckets).
+#
+# On-demand only. The dev SOK is the common target (nightly rebuild), but prod
+# is allowed for the same cold-boot scenario.
+###############################################################################
+name: SOK RF REMEDIATE (fix cold-boot RF/SF stall)
+run-name: SOK RF REMEDIATE · ${{ inputs.env }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace"
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: sok-rf-remediate-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env }}
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-rf-remediate-${{ github.run_id }}
+
+      - name: RF/SF remediate (make sok-rf-remediate)
+        shell: bash # pipefail
+        run: |
+          make sok-rf-remediate env="$TARGET_ENV" | tee /tmp/sok-rf.log
+          echo "## SOK RF/SF remediate ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -40 /tmp/sok-rf.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,76 @@
+name: Infracost
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "infracost.yml"
+      - ".github/workflows/infracost.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  infracost:
+    name: Cost estimate
+    runs-on: ubuntu-latest
+    env:
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # PRs from forks need explicit ref + token to fetch.
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Setup Infracost CLI
+        uses: infracost/actions/setup@e9d6e6cd65e168e76b0de50ff9957d2fe8bb1832 # v3.0.1
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      # If the base branch has a committed baseline, use it for a diff;
+      # otherwise fall back to a plain breakdown.
+      - name: Fetch baseline (if any)
+        id: baseline
+        run: |
+          mkdir -p /tmp/infracost
+          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=1
+          if git show "origin/${{ github.event.pull_request.base.ref }}:infracost-base.json" > /tmp/infracost/base.json 2>/dev/null; then
+            echo "found=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Infracost (diff)
+        if: steps.baseline.outputs.found == 'true'
+        run: |
+          infracost diff \
+            --config-file=infracost.yml \
+            --compare-to=/tmp/infracost/base.json \
+            --format=json \
+            --out-file=/tmp/infracost/result.json
+
+      - name: Run Infracost (breakdown — no baseline yet)
+        if: steps.baseline.outputs.found != 'true'
+        run: |
+          infracost breakdown \
+            --config-file=infracost.yml \
+            --format=json \
+            --out-file=/tmp/infracost/result.json
+
+      - name: Post / update PR comment
+        run: |
+          # --show-all-projects: without it, a diff with zero delta collapses to
+          # "N projects have no cost estimate changes" and the comment shows NO
+          # dollar figures at all (exactly what happened when infracost-base.json
+          # was generated from the same branch being PR'd). With it, every
+          # project's monthly total is listed even when unchanged.
+          infracost comment github \
+            --path=/tmp/infracost/result.json \
+            --repo="$GITHUB_REPOSITORY" \
+            --github-token="${{ secrets.GITHUB_TOKEN }}" \
+            --pull-request=${{ github.event.pull_request.number }} \
+            --show-all-projects \
+            --behavior=update

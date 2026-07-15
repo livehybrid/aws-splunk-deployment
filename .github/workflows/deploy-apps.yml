@@ -1,0 +1,169 @@
+###############################################################################
+# SOK DEPLOY APPS — package the splunk-apps repo to the SOK App Framework
+# bucket (git -> S3 -> operator Download -> PodCopy), and build+ship the SOK
+# console UCC add-on (Splunk_TA_sok_console) to the same sh-apps/ prefix.
+#
+# This is the SOK counterpart of splunk-deploy-apps.yml (EC2, SSM git-sync).
+# Manual dispatch only — never auto-deploy on push. A prod deploy touches the
+# live estate, so it requires confirm=prod (mirrors sok-stop.yml).
+#
+# scope values:
+#   all      — every tier prefix + the console add-on
+#   cm|sh|idx|shc|mc — a single tier prefix (passed straight to package-apps.sh)
+#   console  — build+ship Splunk_TA_sok_console only (skips package-apps.sh)
+#
+# `mc` syncs the mc-apps/ prefix (the MonitoringConsole appRepo — see
+# docs/handoff-sok-lessons-remainder.md A1). Applying the MC appRepo to a live
+# cluster restarts the MC pod once, so run make sok-apply first (or land before
+# a rebuild) before dispatching scope=mc.
+###############################################################################
+name: SOK DEPLOY APPS
+run-name: SOK DEPLOY APPS · ${{ inputs.env }} · ${{ inputs.scope }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      scope:
+        description: "Tier prefix or the console add-on"
+        type: choice
+        options: [all, cm, sh, idx, shc, mc, console]
+        default: all
+      confirm:
+        description: "Type the env name to confirm a PROD deploy (ignored for dev)"
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+# Share the EC2 deploy guard for the same env so app pushes can't overlap.
+concurrency: splunk-deploy-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env }}
+
+jobs:
+  # ── App Framework sync (git -> S3) via make sok-deploy-apps ────────────────
+  apps:
+    # `console` routes to the console job only; every other scope syncs apps.
+    if: ${{ inputs.scope != 'console' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prod confirmation gate
+        run: |
+          # DEP-5: a prod app deploy touches the live estate — require confirm=prod.
+          if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
+            echo "::error ::refusing to deploy apps to PROD without confirm=prod"; exit 1; fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-deploy-apps-${{ github.run_id }}
+
+      - name: Deploy apps (make sok-deploy-apps)
+        shell: bash # pipefail
+        run: |
+          # scope=all reaches package-apps.sh as `all`; a single tier passes
+          # through verbatim. `console` never lands here (guarded above).
+          make sok-deploy-apps env="$TARGET_ENV" scope="${{ inputs.scope }}" | tee /tmp/deploy.log
+          echo "## SOK deploy apps ($TARGET_ENV, ${{ inputs.scope }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -40 /tmp/deploy.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # ── SOK console add-on: ucc-gen build -> deterministic tgz -> S3 sh-apps/ ──
+  console:
+    if: ${{ inputs.scope == 'console' || inputs.scope == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prod confirmation gate
+        run: |
+          if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
+            echo "::error ::refusing to deploy console to PROD without confirm=prod"; exit 1; fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-deploy-console-${{ github.run_id }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Clone splunk-sok-console (private)
+        run: |
+          # The console add-on lives in a private repo. Reuse the same
+          # Secrets Manager token package-apps.sh uses (/git/login) so no new
+          # secret is needed; it must have read on livehybrid/splunk-sok-console.
+          # Optional override: set the CONSOLE_REPO_PAT repo secret (fine-grained
+          # PAT with read on the console repo) if /git/login lacks that scope.
+          TOKEN="${{ secrets.CONSOLE_REPO_PAT }}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="$(aws secretsmanager get-secret-value --region "$AWS_REGION" \
+              --secret-id /git/login --query SecretString --output text)"
+          fi
+          echo "::add-mask::$TOKEN"
+          git clone --depth 1 \
+            "https://${TOKEN}@github.com/livehybrid/splunk-sok-console.git" console 2>&1 \
+            | grep -v "$TOKEN" || true
+          unset TOKEN
+          [ -d console ] || { echo "::error ::console clone failed"; exit 1; }
+
+      - name: Build (ucc-gen) and ship to S3
+        working-directory: console
+        run: |
+          set -euo pipefail
+          pip install --upgrade splunk-add-on-ucc-framework
+          ucc-gen build
+          APP=Splunk_TA_sok_console
+          [ -d "output/$APP" ] || { echo "::error ::ucc-gen produced no output/$APP"; exit 1; }
+          BUCKET="livehybrid-splunk-${TARGET_ENV}-splunk-apps-${TARGET_ENV}"
+
+          # Deterministic tgz — mirrors scripts/package-apps.sh (OPS-11): stage a
+          # copy, pin every mtime, archive a sorted FILE list via -T, zero
+          # uid/gid, gzip -n. Identical content => identical bytes, so the App
+          # Framework's checksum-driven redeploy fires only on real changes. The
+          # filename is STABLE + versionless (rename breaks upgrade tracking).
+          stage="$(mktemp -d)"
+          cp -R "output/$APP" "$stage/"
+          find "$stage" -exec touch -t 202001010000 {} +
+          ( cd "$stage" && find "$APP" \( -type f -o -type l \) -print | LC_ALL=C sort \
+            | tar --no-recursion --owner=0 --group=0 --numeric-owner -cf - -T - \
+            | gzip -n ) > "$APP.tgz"
+
+          aws s3 cp "$APP.tgz" "s3://$BUCKET/sh-apps/$APP.tgz" --region "$AWS_REGION" --only-show-errors
+          echo "## SOK console deploy ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo "-> s3://$BUCKET/sh-apps/$APP.tgz" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,96 @@
+###############################################################################
+# Splunk START — bring up all EC2 / load-balancer resources for a workspace.
+#
+# Applies the cluster layer with just <env>.tfvars (no shutdown overlay),
+# recreating ASGs, instances, EBS cache volumes, the splunk-web ALB and NLBs.
+# Account/iam layers are assumed to be applied (they hold no hourly-cost
+# resources and rarely change).
+#
+# Requires repo variable AWS_TERRAFORM_ROLE_ARN: an OIDC-assumable role with
+# permissions to manage the cluster layer + read the state bucket.
+###############################################################################
+name: Splunk START (bring up cluster)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to start"
+        type: choice
+        options: [prod, dev]
+        default: prod
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: splunk-power-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.11.1"
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then
+            echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then
+            echo "::warning ::AWS_TERRAFORM_ROLE_ARN found in Secrets - consider moving it to Variables (an ARN is not sensitive)."
+            echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else
+            echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: github-actions-splunk-start-${{ github.run_id }}
+
+      # The tfvars set profile="default", and an explicit profile makes the
+      # AWS SDK skip env-var credentials entirely — so write the OIDC session
+      # creds into the default profile for terraform's provider/backend.
+      - name: Write OIDC creds into the default profile
+        run: |
+          aws configure set aws_access_key_id     "$AWS_ACCESS_KEY_ID"     --profile default
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile default
+          aws configure set aws_session_token     "$AWS_SESSION_TOKEN"     --profile default
+          aws configure set region                "$AWS_REGION"            --profile default
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform apply (cluster, full)
+        working-directory: terraform/layers/cluster
+        run: |
+          terraform init -input=false -backend-config=conf/${{ inputs.env }}.backend.conf
+          terraform workspace select -or-create ${{ inputs.env }}
+          terraform apply -input=false -auto-approve \
+            -var-file=vars/${{ inputs.env }}.tfvars
+
+      - name: Report running instances
+        run: |
+          echo "## Splunk ${{ inputs.env }} started" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          aws ec2 describe-instances \
+            --filters Name=tag:project,Values=splunk \
+                      Name=tag:environment,Values=${{ inputs.env }} \
+                      Name=instance-state-name,Values=running,pending \
+            --query 'Reservations[].Instances[].[InstanceId,InstanceType,Tags[?Key==`role`]|[0].Value]' \
+            --output table >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Bootstrap takes ~5 min; then run \`make smoke env=${{ inputs.env }}\` and \`make health env=${{ inputs.env }}\`." >> "$GITHUB_STEP_SUMMARY"

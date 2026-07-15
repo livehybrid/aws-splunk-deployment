@@ -1,0 +1,102 @@
+###############################################################################
+# TERRAFORM PLAN (READ-ONLY) — plan the standard layers (account -> iam ->
+# cluster) for a workspace, or a single layer, via the layer make target
+# (make -C terraform/layers/<layer> terraform-plan). This NEVER applies: it
+# only runs `terraform plan` and writes a binary plan file that is never
+# uploaded or printed.
+#
+# SECURITY / DEP-11 caveat: a plan against LIVE state can echo resource
+# attributes (and, for some resources, sensitive values) into the log — the
+# same reason terraform-ci.yml runs backendless validate on PRs and does NOT
+# plan-against-live. So here the human-readable plan is redirected to a file
+# that is NOT surfaced; the run summary reports pass/fail and change-vs-no-change
+# only. No `-json` plan is ever dumped to the console.
+#
+# On-demand only. Read-only — safe to run any time.
+###############################################################################
+name: TERRAFORM PLAN (read-only)
+run-name: TERRAFORM PLAN · ${{ inputs.env }} · ${{ inputs.layer }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to plan"
+        type: choice
+        options: [prod, dev]
+        default: dev
+      layer:
+        description: "Which layer to plan (all = account -> iam -> cluster in order)"
+        type: choice
+        options: [all, account, iam, cluster]
+        default: all
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: terraform-plan-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.11.1"
+  TARGET_ENV: ${{ inputs.env }}
+  LAYER: ${{ inputs.layer }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-terraform-plan-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Plan (read-only; layer make terraform-plan)
+        shell: bash
+        run: |
+          # Never `set -x` here — a plan diff can contain resource attributes.
+          set +x
+          set -euo pipefail
+          if [ "$LAYER" = "all" ]; then LAYERS="account iam cluster"; else LAYERS="$LAYER"; fi
+          echo "## Terraform plan ($TARGET_ENV) — read-only" >> "$GITHUB_STEP_SUMMARY"
+          rc=0
+          for layer in $LAYERS; do
+            echo "== plan $layer"
+            (
+              cd "terraform/layers/$layer"
+              # Backend init + workspace select (the make plan target assumes an
+              # initialised layer). -lock=false keeps a read-only plan from
+              # taking the state lock.
+              terraform init -input=false -backend-config="conf/$TARGET_ENV.backend.conf" >/dev/null
+              terraform workspace select -or-create "$TARGET_ENV" >/dev/null
+              # Run the REAL make target. Redirect the human-readable plan to a
+              # file that is never uploaded, so no state detail reaches the log.
+              # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error.
+              make -C . terraform-plan env="$TARGET_ENV" args="-input=false -lock=false -detailed-exitcode" \
+                > "/tmp/plan-$layer.out" 2>&1
+            ) && ec=0 || ec=$?
+            case "$ec" in
+              0) echo "- \`$layer\`: ✅ no changes" >> "$GITHUB_STEP_SUMMARY" ;;
+              2) echo "- \`$layer\`: ⚠️ changes pending (plan not shown — inspect locally with \`make -C terraform/layers/$layer terraform-plan env=$TARGET_ENV\`)" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) echo "- \`$layer\`: ❌ plan errored (output withheld to avoid leaking state)" >> "$GITHUB_STEP_SUMMARY"; rc=1 ;;
+            esac
+          done
+          exit $rc

@@ -1,0 +1,79 @@
+###############################################################################
+# ROLLING RESTART — CM-coordinated peer restart (role=indexer) or SHC rolling
+# restart (role=searchhead) on the EC2 estate, via SSM (make rolling-restart).
+# This restarts LIVE indexer peers / search-head members one at a time, so a
+# prod run requires a typed confirm=prod (mirrors sok-stop.yml's gate).
+#
+# On-demand only. role is REQUIRED (the make target rejects anything other than
+# indexer|searchhead).
+###############################################################################
+name: ROLLING RESTART
+run-name: ROLLING RESTART · ${{ inputs.env }} · ${{ inputs.role }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace"
+        type: choice
+        options: [prod, dev]
+        default: dev
+      role:
+        description: "Which tier to roll: indexer (CM-coordinated peers) or searchhead (SHC members)"
+        type: choice
+        options: [indexer, searchhead]
+        required: true
+      confirm:
+        description: "Type the env name to confirm a PROD rolling restart (ignored for dev)"
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+# Share the deploy guard for the env so a roll can't overlap an app push that
+# is landing bundles on the same tier.
+concurrency: splunk-deploy-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env }}
+
+jobs:
+  roll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prod confirmation gate
+        run: |
+          # A prod rolling restart bounces live peers/members — require
+          # confirm=prod on dispatch. Dev needs no confirmation.
+          if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
+            echo "::error ::refusing to roll PROD without confirm=prod"; exit 1; fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-rolling-restart-${{ github.run_id }}
+
+      - name: Rolling restart (make rolling-restart)
+        shell: bash # pipefail
+        run: |
+          make rolling-restart env="$TARGET_ENV" role="${{ inputs.role }}" | tee /tmp/roll.log
+          echo "## Rolling restart ($TARGET_ENV, ${{ inputs.role }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -40 /tmp/roll.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

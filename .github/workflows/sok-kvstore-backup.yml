@@ -1,0 +1,79 @@
+###############################################################################
+# SOK KV-STORE BACKUP — back up the SHC KV store to S3 (make sok-kvstore-backup
+# -> scripts/sok-kvstore-backup.sh). Read-side only: it dumps the KV store and
+# uploads the archive; it never restores or mutates the running cluster, so it
+# is low risk and safe to schedule.
+#
+# Runs on demand for either workspace, and nightly against prod as a standing
+# backup (the dev SOK is destroyed+rebuilt nightly, so its KV store is
+# disposable — only prod is scheduled).
+###############################################################################
+name: SOK KV-STORE BACKUP
+run-name: SOK KV-STORE BACKUP · ${{ inputs.env || 'prod' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to back up"
+        type: choice
+        options: [dev, prod]
+        default: prod
+  schedule:
+    # Nightly prod KV-store backup at 22:15 UTC (after the dev SOK nightly stop
+    # at 21:30, so the runners don't contend). Cron carries no inputs; the
+    # TARGET_ENV default pins the scheduled run to prod.
+    - cron: "15 22 * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: sok-kvstore-backup-${{ inputs.env || 'prod' }}
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env || 'prod' }}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-kvstore-backup-${{ github.run_id }}
+
+      - name: KV-store backup (make sok-kvstore-backup)
+        shell: bash # pipefail
+        run: |
+          make sok-kvstore-backup env="$TARGET_ENV" | tee /tmp/kvbackup.log
+          echo "## SOK KV-store backup ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -40 /tmp/kvbackup.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # A failed prod KV-store backup means no fresh restore point — worth a
+          # ping. No-op until the SLACK_WEBHOOK_URL secret is set.
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$WEBHOOK" || true

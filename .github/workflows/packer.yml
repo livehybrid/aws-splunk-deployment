@@ -1,0 +1,147 @@
+name: Packer — build Splunk AMI
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace whose vars file to use (prod or dev)"
+        required: true
+        type: choice
+        default: prod
+        options:
+          - prod
+          - dev
+      splunk_version:
+        description: "Override the Splunk Enterprise version (blank = use vars/.pkrvars.json default)"
+        required: false
+        type: string
+      splunk_build:
+        description: "Override the Splunk Enterprise build hash"
+        required: false
+        type: string
+      open_tfvars_pr:
+        description: "Open a PR updating splunk_ami in the matching tfvars"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write     # Required for OIDC -> AWS
+  contents: write     # Required to create the auto-update branch
+  pull-requests: write
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.env }} AMI
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate AWS role variable
+        env:
+          ARN_VAR:    ${{ vars.AWS_PACKER_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_PACKER_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then
+            echo "Using vars.AWS_PACKER_ROLE_ARN = $ARN_VAR"
+            echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then
+            echo "::warning ::AWS_PACKER_ROLE_ARN was found in Secrets — recommend moving it to Variables (the ARN isn't sensitive)."
+            echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else
+            echo "::error ::AWS_PACKER_ROLE_ARN is not set. Create it in Settings → Secrets and variables → Actions → Variables (Repository level)."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: github-actions-packer-${{ github.run_id }}
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
+        with:
+          version: latest
+
+      - name: Packer init
+        working-directory: packer/splunk
+        run: packer init .
+
+      - name: Packer validate
+        working-directory: packer/splunk
+        run: |
+          packer validate \
+            -var-file=../_shared/vars/${{ github.event.inputs.env }}.pkrvars.json \
+            ${{ github.event.inputs.splunk_version != '' && format('-var=splunk_version={0}', github.event.inputs.splunk_version) || '' }} \
+            ${{ github.event.inputs.splunk_build   != '' && format('-var=splunk_build={0}',   github.event.inputs.splunk_build)   || '' }} \
+            -var='temporary_sg_source_cidrs=["0.0.0.0/0"]' \
+            -var='aws_profile=' \
+            .
+
+      - name: Packer build
+        working-directory: packer/splunk
+        run: |
+          packer build -color=false \
+            -var-file=../_shared/vars/${{ github.event.inputs.env }}.pkrvars.json \
+            ${{ github.event.inputs.splunk_version != '' && format('-var=splunk_version={0}', github.event.inputs.splunk_version) || '' }} \
+            ${{ github.event.inputs.splunk_build   != '' && format('-var=splunk_build={0}',   github.event.inputs.splunk_build)   || '' }} \
+            -var='temporary_sg_source_cidrs=["0.0.0.0/0"]' \
+            -var='aws_profile=' \
+            .
+
+      - name: Extract AMI ID
+        id: ami
+        working-directory: packer/splunk
+        run: |
+          AMI=$(jq -r '.builds[-1].artifact_id' manifest.json | cut -d: -f2)
+          echo "AMI: $AMI"
+          echo "ami_id=$AMI" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Splunk AMI built"
+            echo ""
+            echo "| Workspace | AMI ID |"
+            echo "| --- | --- |"
+            echo "| \`${{ github.event.inputs.env }}\` | \`${{ steps.ami.outputs.ami_id }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update tfvars and open PR
+        if: ${{ github.event.inputs.open_tfvars_pr == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENV: ${{ github.event.inputs.env }}
+          AMI_ID: ${{ steps.ami.outputs.ami_id }}
+        run: |
+          set -euo pipefail
+          BRANCH="packer/update-${ENV}-ami-$(date +%Y%m%d-%H%M%S)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          TFVARS="terraform/layers/_shared/vars/${ENV}.tfvars"
+          # Replace or insert splunk_ami line.
+          if grep -q '^splunk_ami' "$TFVARS"; then
+            sed -i.bak "s|^splunk_ami.*|splunk_ami     = \"$AMI_ID\"|" "$TFVARS" && rm "$TFVARS.bak"
+          else
+            printf '\nsplunk_ami = "%s"\n' "$AMI_ID" >> "$TFVARS"
+          fi
+
+          git add "$TFVARS"
+          git commit -m "Packer: update ${ENV} splunk_ami to $AMI_ID"
+          git push origin "$BRANCH"
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh pr create \
+            --title "Packer: update ${ENV} splunk_ami to $AMI_ID" \
+            --body  "Auto-generated by .github/workflows/packer.yml run $RUN_URL" \
+            --base  "${GITHUB_REF_NAME}" \
+            --head  "$BRANCH"
