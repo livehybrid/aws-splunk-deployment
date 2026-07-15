@@ -1,9 +1,9 @@
 ###############################################################################
-# OPS-4 (option a): in-cluster alert watchdog — a 10-min CronJob that posts to
+# OPS-4 (option a): in-cluster alert watchdog, a 10-min CronJob that posts to
 # Slack when something is wrong BETWEEN workflow runs (the START/STOP/CHECKS
 # alerts only cover lifecycle moments): CRs not Ready, crash-looping pods, or
 # failed Jobs (e.g. the KV backup). Deployed only when the webhook secret id is
-# set (var.sok_alert_webhook_secret_id); reuses the kvbackup pattern — its own
+# set (var.sok_alert_webhook_secret_id); reuses the kvbackup pattern, its own
 # ServiceAccount with read-only RBAC, digest-pinned alpine/k8s image. The
 # webhook is read from Secrets Manager at RUN time via IRSA (never in state).
 # The richer Splunk-native alert suite arrives with the SOK console app (#53).
@@ -132,7 +132,7 @@ resource "kubernetes_config_map_v1" "watchdog_script" {
       [ -n "$failed_jobs" ] && PROBLEMS="$PROBLEMS stale-jobs: $failed_jobs|"
       [ -z "$PROBLEMS" ] && { echo "healthy"; exit 0; }
       HOOK=$(aws secretsmanager get-secret-value --secret-id "$WEBHOOK_SECRET_ID" --query SecretString --output text 2>/dev/null)
-      [ -z "$HOOK" ] && { echo "no webhook — problems: $PROBLEMS"; exit 1; }
+      [ -z "$HOOK" ] && { echo "no webhook, problems: $PROBLEMS"; exit 1; }
       curl -s -m 10 -X POST -H 'Content-Type: application/json' \
         -d "{\"text\":\":warning: SOK watchdog ($${ENVIRONMENT}): $PROBLEMS\"}" "$HOOK" >/dev/null
       echo "alerted: $PROBLEMS"

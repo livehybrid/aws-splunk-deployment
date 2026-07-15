@@ -1,16 +1,16 @@
 ###############################################################################
-# SOK STOP — the ONLY route to ~$0 overnight for deployment_model=sok: a full
+# SOK STOP, the ONLY route to ~$0 overnight for deployment_model=sok: a full
 # destroy of the sok then eks layers (an EKS control plane bills ~$0.10/hr for
 # merely existing, so parking-in-place is not enough). The persistent account
 # layer (SmartStore + apps buckets = source of truth) is NEVER touched.
 #
 # Order matters:
-#   1. best-effort hot-bucket roll (dev data is disposable — see plan §5; the
+#   1. best-effort hot-bucket roll (dev data is disposable, see plan §5; the
 #      full per-index roll+drain is a prod/K7 requirement, supervised first).
-#   2. destroy sok — CRs, operator, and the namespace (whose deletion cascades
+#   2. destroy sok, CRs, operator, and the namespace (whose deletion cascades
 #      the PVCs) go while the eks CSI driver still exists, so reclaimPolicy
 #      Delete actually deletes the EBS volumes.
-#   3. wait until no cluster-tagged EBS volumes remain (async CSI reclaim) —
+#   3. wait until no cluster-tagged EBS volumes remain (async CSI reclaim),
 #      deleting the cluster first would orphan them and they'd bill nightly.
 #   4. destroy eks (one retry).
 #   5. verify: no cluster, no tagged EBS volumes, no ELBs.
@@ -52,7 +52,7 @@ jobs:
 
       - name: Prod confirmation gate
         run: |
-          # DEP-5: a prod destroy must be deliberate — require confirm=prod on
+          # DEP-5: a prod destroy must be deliberate, require confirm=prod on
           # dispatch. The nightly cron only ever targets dev (TARGET_ENV default).
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
              [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
@@ -88,7 +88,7 @@ jobs:
       - name: Allowlist runner + roll hot buckets (best-effort)
         run: |
           CLUSTER=splunk-sok-$TARGET_ENV
-          aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1 || { echo "no cluster — nothing to stop"; exit 0; }
+          aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1 || { echo "no cluster, nothing to stop"; exit 0; }
           # The runner isn't in trusted_cidrs; append its IP so the sok destroy
           # can reach the K8s API. The eks destroy removes the cluster, so no cleanup.
           RUNNER_CIDR="$(curl -s https://checkip.amazonaws.com)/32"
@@ -102,16 +102,16 @@ jobs:
           # matches single-site (splunk-idxc-indexer-*) AND multisite
           # (splunk-idxc-siteN-indexer-*) peers. NB the cluster-manager pod also
           # carries component=indexer, so match on name=indexer (the CM is
-          # name=cluster-manager) — the old instance=splunk-idxc-indexer selector
+          # name=cluster-manager), the old instance=splunk-idxc-indexer selector
           # silently rolled NOTHING on the multisite shape and deleted unrolled hot
           # data. Every ENABLED index is rolled (enumerated via REST), not a fixed
           # subset. Dev data is disposable (plan §5); best-effort, never fatal.
           PEERS=$(kubectl get pods -n splunk -l app.kubernetes.io/name=indexer -o name 2>/dev/null | sed 's#^pod/##')
-          [ -z "$PEERS" ] && echo "::warning ::no indexer peers matched name=indexer — nothing rolled"
+          [ -z "$PEERS" ] && echo "::warning ::no indexer peers matched name=indexer, nothing rolled"
           FIRST=$(echo "$PEERS" | head -1)
           IDXS=""
           if [ -n "$FIRST" ]; then
-            # `timeout` bounds each exec — a wedged splunkd must not hang the
+            # `timeout` bounds each exec, a wedged splunkd must not hang the
             # nightly stop (OPS-12); the roll stays best-effort either way.
             IDXS=$(timeout 60 kubectl exec -n splunk "$FIRST" -- bash -c \
               'curl -sk -m 30 -u "admin:$(cat /mnt/splunk-secrets/password)" "https://localhost:8089/services/data/indexes?output_mode=json&count=0&f=name&f=disabled"' 2>/dev/null \
@@ -129,7 +129,7 @@ jobs:
           # supervised prod/K7 step; here we cap a best-effort wait.
           sleep 60
           # Graceful `splunk offline` per peer BEFORE terraform tears the CRs
-          # down (credit: Gareth Anderson, SplunkTrust — unclean indexer kills
+          # down (credit: Gareth Anderson, SplunkTrust, unclean indexer kills
           # were his #1 cause of corrupted SmartStore buckets, and corrupt
           # buckets PERSIST INTO S3, so "data survives in S3" doesn't cover us).
           # --enforce-counts=false: we're stopping the whole cluster, not one
@@ -152,7 +152,7 @@ jobs:
         run: |
           # OPS-12: destroying the cluster while CSI reclaim is in flight orphans
           # the volumes (they then bill nightly, invisible to k8s). HARD FAIL if
-          # they haven't drained — a rerun after CSI finishes is the safe path.
+          # they haven't drained, a rerun after CSI finishes is the safe path.
           for _ in $(seq 1 30); do
             N=$(aws ec2 describe-volumes --filters "Name=tag-key,Values=kubernetes.io/cluster/splunk-sok-$TARGET_ENV" --query 'length(Volumes)' --output text)
             echo "cluster-tagged EBS volumes: $N"
@@ -160,7 +160,7 @@ jobs:
             sleep 10
           done
           if [ "$N" != "0" ]; then
-            echo "::error ::$N EBS volume(s) still present after 5m — refusing to destroy the cluster under them (orphan risk). Re-run once CSI reclaim completes."
+            echo "::error ::$N EBS volume(s) still present after 5m, refusing to destroy the cluster under them (orphan risk). Re-run once CSI reclaim completes."
             exit 1
           fi
 
@@ -182,8 +182,8 @@ jobs:
           if [ "$C" = "0" ] && [ "$V" = "0" ] && [ "$L" = "0" ]; then
             echo "✅ No cluster, EBS volumes or ELBs remain. Residual ≈ \$1/mo (foundation KMS)." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning ::residual — clusters:$C EBS:$V ELBs:$L"
-            echo "⚠️ residual — clusters:$C EBS:$V ELBs:$L" >> "$GITHUB_STEP_SUMMARY"; exit 1
+            echo "::warning ::residual, clusters:$C EBS:$V ELBs:$L"
+            echo "⚠️ residual, clusters:$C EBS:$V ELBs:$L" >> "$GITHUB_STEP_SUMMARY"; exit 1
           fi
 
       - name: Notify Slack on failure
@@ -191,9 +191,9 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          # OPS-4: a failed nightly stop = the cluster keeps billing overnight —
+          # OPS-4: a failed nightly stop = the cluster keeps billing overnight,
           # the one failure that must page someone. No-op until the secret is set.
-          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set, skipping notify"; exit 0; }
           curl -s -m 10 -X POST -H 'Content-Type: application/json' \
-            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` (cluster may still be running/billing) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` (cluster may still be running/billing), ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "$WEBHOOK" || true

@@ -1,7 +1,7 @@
 version: "0.1"
 
 ###############################################################################
-# Infracost multi-project config — per-(layer × workspace) costing.
+# Infracost multi-project config, per-(layer × workspace) costing.
 #
 # Used by:
 #   - Local: `make infracost-breakdown` or `make infracost-diff`

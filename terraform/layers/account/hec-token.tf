@@ -3,13 +3,13 @@
 #
 # The operator's global secret carries a hec_token used by every HEC input.
 # It USED to be minted by random_uuid in the sok layer, so it regenerated on
-# every nightly sok destroy/recreate — anything sending HEC (external
+# every nightly sok destroy/recreate, anything sending HEC (external
 # forwarders, the estate's own tooling) had to be re-tokened after each rebuild.
 #
 # Persist it here instead: the foundation layer is NEVER part of the nightly
 # teardown, so a token stored in it survives every rebuild. It mirrors the other
 # SOK secrets' flow exactly (admin_password/pass4symmkey/license are Secrets
-# Manager secrets read by the sok layer via aws_secretsmanager_secret_version) —
+# Manager secrets read by the sok layer via aws_secretsmanager_secret_version),
 # the difference is that those are pre-existing estate secrets, whereas this one
 # is foundation-owned, so foundation both CREATES and SEEDS it.
 #
@@ -25,7 +25,7 @@ resource "random_uuid" "hec_token" {}
 
 resource "aws_secretsmanager_secret" "hec_token" {
   name        = "/${var.environment}/splunk/hec_token"
-  description = "Persistent HEC token for the SOK global secret (survives the nightly rebuild) — OPS-14."
+  description = "Persistent HEC token for the SOK global secret (survives the nightly rebuild), OPS-14."
 
   tags = {
     project     = "splunk"
@@ -33,7 +33,7 @@ resource "aws_secretsmanager_secret" "hec_token" {
     Environment = var.environment
   }
 
-  # The token every HEC sender relies on — never let a destroy take it.
+  # The token every HEC sender relies on, never let a destroy take it.
   lifecycle {
     prevent_destroy = true
   }

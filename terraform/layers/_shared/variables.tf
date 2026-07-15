@@ -134,11 +134,11 @@ variable "data_volume_filesystem" {
 ###############################################################################
 
 ###############################################################################
-# SOK (eks + sok layers) — only read when deployment_model = "sok"
+# SOK (eks + sok layers), only read when deployment_model = "sok"
 ###############################################################################
 
 variable "eks_kubernetes_version" {
-  description = "EKS control-plane version. Coupled constraints (July 2026): SOK 3.1.0 supports K8s 1.25-1.34; K8s 1.34 requires Splunk >= 10.4 (IRSA token format). 1.34 exits standard EKS support 2026-12-02 — after that the parked control plane bills 6x unless upgraded (needs a newer SOK release)."
+  description = "EKS control-plane version. Coupled constraints (July 2026): SOK 3.1.0 supports K8s 1.25-1.34; K8s 1.34 requires Splunk >= 10.4 (IRSA token format). 1.34 exits standard EKS support 2026-12-02, after that the parked control plane bills 6x unless upgraded (needs a newer SOK release)."
   type        = string
   default     = "1.34"
 }
@@ -162,7 +162,7 @@ variable "eks_vpc_name_tag" {
 }
 
 variable "eks_node_groups" {
-  description = "Managed node groups, keyed by name. Splunk Enterprise images are x86-64 only and Splunk 10 requires AVX — no Graviton. Indexer nodes should be on-demand (no Spot for stateful pods)."
+  description = "Managed node groups, keyed by name. Splunk Enterprise images are x86-64 only and Splunk 10 requires AVX, no Graviton. Indexer nodes should be on-demand (no Spot for stateful pods)."
   type = map(object({
     instance_type     = string
     desired           = number
@@ -194,20 +194,20 @@ variable "sok_namespace" {
 }
 
 variable "sok_operator_chart_version" {
-  description = "splunk/splunk-operator Helm chart version. CRDs are vendored separately in eks/files/ (removed from the chart in 3.0.0) — bump BOTH together."
+  description = "splunk/splunk-operator Helm chart version. CRDs are vendored separately in eks/files/ (removed from the chart in 3.0.0), bump BOTH together."
   type        = string
   default     = "3.1.0"
 }
 
 variable "sok_splunk_image" {
-  description = "Splunk Enterprise container image for all CRs (x86-64 only). Digest-pinned (SEC-6/DEP-8): the tag documents the version, the digest is what deploys — a mutated tag can't ride into the nightly rebuild. Captured from the validated 10.4.0 deploy; bump tag+digest together."
+  description = "Splunk Enterprise container image for all CRs (x86-64 only). Digest-pinned (SEC-6/DEP-8): the tag documents the version, the digest is what deploys, a mutated tag can't ride into the nightly rebuild. Captured from the validated 10.4.0 deploy; bump tag+digest together."
   type        = string
   default     = "docker.io/splunk/splunk:10.4.0@sha256:5fef7b0d2c83f6e8b3fe3cda5885e2a01e3a6eb99d8502e6333aaa64e7021f62"
 }
 
 # Env-scoped Splunk secrets (SEC-1). Defaults are the estate's LEGACY shared
 # paths (what prod/EC2 uses today); dev overrides to /dev/splunk/* so dev pods
-# never hold prod credentials. Rotation rides the nightly rebuild — the cluster
+# never hold prod credentials. Rotation rides the nightly rebuild, the cluster
 # re-forms with whatever these point at.
 variable "sok_secret_admin_password_id" {
   description = "Secrets Manager id of the Splunk admin password for the SOK global secret. dev: /dev/splunk/password (env-scoped, SEC-1)."
@@ -234,7 +234,7 @@ variable "sok_secret_hec_token_id" {
 }
 
 variable "sok_accept_splunk_general_terms" {
-  description = "Set to \"--accept-sgt-current-at-splunk-com\" to accept the Splunk General Terms (https://www.splunk.com/en_us/legal/splunk-general-terms.html). MANDATORY for Splunk 10.x containers under operator >= 3.0.0 — pods refuse to start without it. Deliberately has no accepting default."
+  description = "Set to \"--accept-sgt-current-at-splunk-com\" to accept the Splunk General Terms (https://www.splunk.com/en_us/legal/splunk-general-terms.html). MANDATORY for Splunk 10.x containers under operator >= 3.0.0, pods refuse to start without it. Deliberately has no accepting default."
   type        = string
   default     = ""
 }
@@ -246,13 +246,13 @@ variable "sok_indexer_replicas" {
 }
 
 variable "sok_etc_storage" {
-  description = "Per-pod /opt/splunk/etc PVC size. The operator NEVER resizes PVCs — size generously."
+  description = "Per-pod /opt/splunk/etc PVC size. The operator NEVER resizes PVCs, size generously."
   type        = string
   default     = "10Gi"
 }
 
 variable "sok_var_storage" {
-  description = "Per-pod /opt/splunk/var PVC size (holds the SmartStore cache). The operator NEVER resizes PVCs — size generously."
+  description = "Per-pod /opt/splunk/var PVC size (holds the SmartStore cache). The operator NEVER resizes PVCs, size generously."
   type        = string
   default     = "50Gi"
 }
@@ -264,19 +264,19 @@ variable "sok_etc_storage_by_role" {
 }
 
 variable "sok_var_storage_by_role" {
-  description = "Per-role override of sok_var_storage (NFR-6) — only indexers need the big SmartStore-cache volume; LM/MC/CM idle at a fraction. Keys: cm, idxc, sh, shc, lm, mc; unset roles use the global."
+  description = "Per-role override of sok_var_storage (NFR-6), only indexers need the big SmartStore-cache volume; LM/MC/CM idle at a fraction. Keys: cm, idxc, sh, shc, lm, mc; unset roles use the global."
   type        = map(string)
   default     = {}
 }
 
 ###############################################################################
-# SOK external web access (opt-in) — put an internet-facing ALB Ingress in
+# SOK external web access (opt-in), put an internet-facing ALB Ingress in
 # front of the Standalone search head's Splunk Web (:8000) so the UI has a real
 # HTTPS URL instead of `kubectl port-forward`. OFF by default. See
 # terraform/layers/sok/web-ingress.tf and the docs "External access" section.
 ###############################################################################
 variable "eks_console_admin_principal_arns" {
-  description = "IAM principal ARNs granted AmazonEKSClusterAdminPolicy via EKS access entries so the AWS Console can browse Kubernetes objects (authentication_mode=API trusts NOBODY by default — not even root). Terraform-managed, so the grant survives the nightly rebuild."
+  description = "IAM principal ARNs granted AmazonEKSClusterAdminPolicy via EKS access entries so the AWS Console can browse Kubernetes objects (authentication_mode=API trusts NOBODY by default, not even root). Terraform-managed, so the grant survives the nightly rebuild."
   type        = list(string)
   default     = []
 }
@@ -294,7 +294,7 @@ variable "sok_alert_webhook_secret_id" {
 }
 
 variable "sok_cpucredit_low_threshold" {
-  description = "CPUCreditBalance below which the NFR-2 burstable-node alarm fires (min across an ASG's instances). 100 credits is ~2.7h of t3.large baseline runway (36 credits/hr) — enough warning before throttling, high enough to ignore normal burst dips. Tune per node size."
+  description = "CPUCreditBalance below which the NFR-2 burstable-node alarm fires (min across an ASG's instances). 100 credits is ~2.7h of t3.large baseline runway (36 credits/hr), enough warning before throttling, high enough to ignore normal burst dips. Tune per node size."
   type        = number
   default     = 100
 }
@@ -306,7 +306,7 @@ variable "sok_alarm_notify_email" {
 }
 
 variable "sok_pod_resources" {
-  description = "Per-pod CPU/memory requests+limits for the Splunk CRs. null = the dev Burstable default (requests << limits, everything on one node). Prod sets requests==limits for Guaranteed QoS (NFR-1) — e.g. { requests = { cpu = \"2\", memory = \"8Gi\" }, limits = { cpu = \"2\", memory = \"8Gi\" } }."
+  description = "Per-pod CPU/memory requests+limits for the Splunk CRs. null = the dev Burstable default (requests << limits, everything on one node). Prod sets requests==limits for Guaranteed QoS (NFR-1), e.g. { requests = { cpu = \"2\", memory = \"8Gi\" }, limits = { cpu = \"2\", memory = \"8Gi\" } }."
   type = object({
     requests = object({ cpu = string, memory = string })
     limits   = object({ cpu = string, memory = string })
@@ -315,7 +315,7 @@ variable "sok_pod_resources" {
 }
 
 variable "sok_web_external_enabled" {
-  description = "Expose Splunk Web (the SOK Standalone search head) on an internet-facing ALB Ingress. OFF by default — the normal access path is `kubectl port-forward`. When true, also set sok_web_external_hostname + sok_web_external_zone_name."
+  description = "Expose Splunk Web (the SOK Standalone search head) on an internet-facing ALB Ingress. OFF by default, the normal access path is `kubectl port-forward`. When true, also set sok_web_external_hostname + sok_web_external_zone_name."
   type        = bool
   default     = false
 }
@@ -327,7 +327,7 @@ variable "sok_web_external_hostname" {
 }
 
 variable "sok_web_external_zone_name" {
-  description = "Route53 public hosted zone that owns sok_web_external_hostname (no trailing dot), e.g. splunk.livehybrid.com. Used for the CNAME record and — if sok_web_external_certificate_arn is empty — to discover the *.<zone> ACM cert."
+  description = "Route53 public hosted zone that owns sok_web_external_hostname (no trailing dot), e.g. splunk.livehybrid.com. Used for the CNAME record and, if sok_web_external_certificate_arn is empty, to discover the *.<zone> ACM cert."
   type        = string
   default     = ""
 }
@@ -339,7 +339,7 @@ variable "sok_web_external_certificate_arn" {
 }
 
 variable "sok_web_external_components" {
-  description = "Which Splunk UIs the external ALB fronts (host-based routing on ONE ALB). Keys: sh (search tier — Standalone or SHC by shape), cm, lm, mc, deployer (SHC shapes only). Indexers are never exposable (splunkweb disabled on peers). sh uses sok_web_external_hostname; every other component gets <first-label>-<component>.<zone>, still covered by the *.<zone> cert."
+  description = "Which Splunk UIs the external ALB fronts (host-based routing on ONE ALB). Keys: sh (search tier, Standalone or SHC by shape), cm, lm, mc, deployer (SHC shapes only). Indexers are never exposable (splunkweb disabled on peers). sh uses sok_web_external_hostname; every other component gets <first-label>-<component>.<zone>, still covered by the *.<zone> cert."
   type        = list(string)
   default     = ["sh"]
 }
@@ -351,7 +351,7 @@ variable "sok_hec_external_enabled" {
 }
 
 variable "sok_web_external_allowed_cidrs" {
-  description = "Inbound allow-list on the external Splunk Web ALB. Empty = fall back to trusted_cidrs. Set [\"0.0.0.0/0\"] to make it fully public — NB the SOK admin password is the estate's shared /monitoring/splunk/password (finding SEC-1), so keep this as narrow as the audience allows."
+  description = "Inbound allow-list on the external Splunk Web ALB. Empty = fall back to trusted_cidrs. Set [\"0.0.0.0/0\"] to make it fully public, NB the SOK admin password is the estate's shared /monitoring/splunk/password (finding SEC-1), so keep this as narrow as the audience allows."
   type        = list(string)
   default     = []
 }

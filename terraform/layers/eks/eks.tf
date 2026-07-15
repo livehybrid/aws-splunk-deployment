@@ -8,7 +8,7 @@
 #   reach the API for the nightly stop, and private endpoints take no CIDR
 #   allowlist. At-rest CIDRs = trusted_cidrs; CI appends its egress IP per-run.
 # - NO EKS Auto Mode (21-day forced node recycling, per-instance surcharge,
-#   own EBS provisioner — all wrong for stateful indexers). No Spot.
+#   own EBS provisioner, all wrong for stateful indexers). No Spot.
 # - AL2023 x86-64 nodes with THP disabled via pre-nodeadm user data: Splunk
 #   documents >= 30% degradation with THP on, and the operator does not
 #   manage node OS settings.
@@ -17,7 +17,7 @@
 module "eks" {
   source = "terraform-aws-modules/eks/aws"
   # Pinned EXACT (DEP-7): a floating ~> pin let every nightly rebuild pick up
-  # whatever the module released that day — the opposite of the deterministic
+  # whatever the module released that day, the opposite of the deterministic
   # rebuild the stop/start model assumes. Bump deliberately, with a plan.
   version = "21.24.0"
 
@@ -57,7 +57,7 @@ module "eks" {
         }
       }
     },
-    # Console/browse access — authentication_mode API grants nobody implicitly
+    # Console/browse access, authentication_mode API grants nobody implicitly
     # (not even the account root). Terraform-managed so the grant survives the
     # nightly rebuild, unlike a hand-run `aws eks create-access-entry`.
     { for i, arn in var.eks_console_admin_principal_arns : "console_admin_${i}" => {
@@ -73,7 +73,7 @@ module "eks" {
     } }
   )
 
-  # Addon versions pinned (DEP-7) — the module defaults to most_recent, so an
+  # Addon versions pinned (DEP-7), the module defaults to most_recent, so an
   # unpinned nightly rebuild silently adopts whatever AWS published overnight.
   # These are the versions the 1.34 estate validated on (captured from the live
   # cluster); bump alongside kubernetes_version upgrades.
@@ -92,7 +92,7 @@ module "eks" {
       # full ENI's worth of IPs (15 on t3.xlarge) per node; cap the warm pool so
       # a multi-node multisite shape can't exhaust a subnet. If the prod-shape
       # pod density ever outgrows this, the real fix is a secondary VPC CIDR +
-      # CNI custom networking — see the runbook's IP-capacity note.
+      # CNI custom networking, see the runbook's IP-capacity note.
       configuration_values = jsonencode({
         # SEC-5: enables the aws-network-policy-agent so the splunk namespace's
         # NetworkPolicy objects (sok layer) are actually ENFORCED.
@@ -126,11 +126,11 @@ module "eks" {
           content_type = "text/x-shellscript; charset=\"us-ascii\""
           content      = file("${path.module}/files/node-prep.sh")
         },
-        # Kubelet tuning for Splunk pods (credit: Gareth Anderson, SplunkTrust —
+        # Kubelet tuning for Splunk pods (credit: Gareth Anderson, SplunkTrust,
         # "SOK lessons from our implementation" pt2 + Splunk Lantern "Advanced
         # operational learnings"):
         #   singleProcessOOMKill: cgroupsv2 otherwise SIGKILLs the WHOLE pod
-        #     process tree when one search OOMs — splunkd dies uncleanly (a
+        #     process tree when one search OOMs, splunkd dies uncleanly (a
         #     SmartStore-corruption vector). K8s 1.32+ / EKS 1.34.
         #   shutdownGracePeriod: node-level graceful shutdown so splunkd gets
         #     time to stop on node termination (ASG churn, spot, upgrades).
@@ -155,7 +155,7 @@ module "eks" {
     }
   }
 
-  # A parked SOK deployment is destroyed nightly — never let cluster deletion
+  # A parked SOK deployment is destroyed nightly, never let cluster deletion
   # be blocked by lingering-resource protections we then have to hand-clean.
   deletion_protection = false
 

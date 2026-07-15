@@ -1,18 +1,18 @@
 ###############################################################################
-# TERRAFORM PLAN (READ-ONLY) — plan the standard layers (account -> iam ->
+# TERRAFORM PLAN (READ-ONLY), plan the standard layers (account -> iam ->
 # cluster) for a workspace, or a single layer, via the layer make target
 # (make -C terraform/layers/<layer> terraform-plan). This NEVER applies: it
 # only runs `terraform plan` and writes a binary plan file that is never
 # uploaded or printed.
 #
 # SECURITY / DEP-11 caveat: a plan against LIVE state can echo resource
-# attributes (and, for some resources, sensitive values) into the log — the
+# attributes (and, for some resources, sensitive values) into the log, the
 # same reason terraform-ci.yml runs backendless validate on PRs and does NOT
 # plan-against-live. So here the human-readable plan is redirected to a file
 # that is NOT surfaced; the run summary reports pass/fail and change-vs-no-change
 # only. No `-json` plan is ever dumped to the console.
 #
-# On-demand only. Read-only — safe to run any time.
+# On-demand only. Read-only, safe to run any time.
 ###############################################################################
 name: TERRAFORM PLAN (read-only)
 run-name: TERRAFORM PLAN · ${{ inputs.env }} · ${{ inputs.layer }}
@@ -72,11 +72,11 @@ jobs:
       - name: Plan (read-only; layer make terraform-plan)
         shell: bash
         run: |
-          # Never `set -x` here — a plan diff can contain resource attributes.
+          # Never `set -x` here, a plan diff can contain resource attributes.
           set +x
           set -euo pipefail
           if [ "$LAYER" = "all" ]; then LAYERS="account iam eks sok"; else LAYERS="$LAYER"; fi
-          echo "## Terraform plan ($TARGET_ENV) — read-only" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Terraform plan ($TARGET_ENV), read-only" >> "$GITHUB_STEP_SUMMARY"
           rc=0
           for layer in $LAYERS; do
             echo "== plan $layer"
@@ -95,7 +95,7 @@ jobs:
             ) && ec=0 || ec=$?
             case "$ec" in
               0) echo "- \`$layer\`: ✅ no changes" >> "$GITHUB_STEP_SUMMARY" ;;
-              2) echo "- \`$layer\`: ⚠️ changes pending (plan not shown — inspect locally with \`make -C terraform/layers/$layer terraform-plan env=$TARGET_ENV\`)" >> "$GITHUB_STEP_SUMMARY" ;;
+              2) echo "- \`$layer\`: ⚠️ changes pending (plan not shown, inspect locally with \`make -C terraform/layers/$layer terraform-plan env=$TARGET_ENV\`)" >> "$GITHUB_STEP_SUMMARY" ;;
               *) echo "- \`$layer\`: ❌ plan errored (output withheld to avoid leaking state)" >> "$GITHUB_STEP_SUMMARY"; rc=1 ;;
             esac
           done

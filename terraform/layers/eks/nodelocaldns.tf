@@ -1,10 +1,10 @@
 ###############################################################################
-# NodeLocal DNSCache — a per-node DNS cache (DaemonSet) that intercepts pod DNS
+# NodeLocal DNSCache, a per-node DNS cache (DaemonSet) that intercepts pod DNS
 # queries locally and forwards to CoreDNS over TCP.
 #
 # Why: on the multisite bring-up, indexers crash-looped with a SmartStore FATAL
 # ("S3ClientProps did not find credentials") because sts.<region> DNS resolution
-# intermittently FAILS — the classic EKS UDP-conntrack race on the pod->CoreDNS
+# intermittently FAILS, the classic EKS UDP-conntrack race on the pod->CoreDNS
 # ->VPC-resolver path. IRSA is configured correctly; it's the DNS blip the plan
 # (K7.1) warned would "wedge the CM". node-local-dns removes the pod->CoreDNS
 # UDP+DNAT hop (local cache) and uses force_tcp to the upstream, killing the race.
@@ -22,7 +22,7 @@ locals {
   nodelocaldns_image = "registry.k8s.io/dns/k8s-dns-node-cache:1.26.8"
   # kube-dns Service ClusterIP = .10 of the EKS service CIDR (default
   # 10.100.0.0/16). __PILLAR__CLUSTER__DNS__ / __PILLAR__UPSTREAM__SERVERS__ stay
-  # literal — the node-cache binary fills them at runtime from -upstreamsvc and
+  # literal, the node-cache binary fills them at runtime from -upstreamsvc and
   # the node's /etc/resolv.conf.
   nodelocaldns_corefile = <<-EOT
     cluster.local:53 {
@@ -83,7 +83,7 @@ resource "kubernetes_service_account_v1" "node_local_dns" {
   depends_on = [module.eks]
 }
 
-# Stable upstream for cluster.local queries — selects the CoreDNS pods.
+# Stable upstream for cluster.local queries, selects the CoreDNS pods.
 resource "kubernetes_service_v1" "kube_dns_upstream" {
   metadata {
     name      = "kube-dns-upstream"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rf-remediate.sh <env> — one-shot fix for the SmartStore cold-boot RF stall.
+# rf-remediate.sh <env>, one-shot fix for the SmartStore cold-boot RF stall.
 #
 # After a cold boot against a populated SmartStore bucket, legacy buckets
 # (origin GUIDs from a previous instance generation) each get registered by

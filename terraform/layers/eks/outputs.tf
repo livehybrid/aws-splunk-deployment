@@ -12,7 +12,7 @@ output "cluster_certificate_authority_data" {
 }
 
 output "oidc_provider" {
-  description = "OIDC issuer URL (no scheme) — IRSA trust-policy conditions key off this."
+  description = "OIDC issuer URL (no scheme), IRSA trust-policy conditions key off this."
   value       = module.eks.oidc_provider
 }
 

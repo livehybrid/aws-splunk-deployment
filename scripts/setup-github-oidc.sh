@@ -4,7 +4,7 @@
 #
 # What this creates in your AWS account:
 #   1. An OIDC identity provider for token.actions.githubusercontent.com
-#      (idempotent — skipped if it already exists).
+#      (idempotent, skipped if it already exists).
 #   2. An IAM role `GitHubActionsPacker` that GitHub Actions can assume from
 #      the configured repo, attached to a managed policy with the EC2
 #      permissions Packer's amazon-ebs builder needs.
@@ -40,7 +40,7 @@ else
   echo "==> OIDC provider already present"
 fi
 
-# 2. Role trust policy — scoped to the repo (any branch).
+# 2. Role trust policy, scoped to the repo (any branch).
 TRUST=$(cat <<JSON
 {
   "Version": "2012-10-17",
@@ -74,7 +74,7 @@ else
     --policy-document "$TRUST"
 fi
 
-# 3. Permission policy — based on HashiCorp's documented minimum for the
+# 3. Permission policy, based on HashiCorp's documented minimum for the
 #    amazon-ebs builder. Scope kept account-wide because Packer creates
 #    short-lived resources tagged with timestamps.
 POLICY=$(cat <<'JSON'

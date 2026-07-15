@@ -1,5 +1,5 @@
 ###############################################################################
-# SmartStore bucket + KMS key — the warm/cold tier for the SOK indexers.
+# SmartStore bucket + KMS key, the warm/cold tier for the SOK indexers.
 #
 #   bucket: livehybrid-splunk-<env>-splunk-smartstore-<env>
 #   alias:  alias/splunk-smartstore-<env>-key
@@ -26,7 +26,7 @@ resource "aws_kms_key" "smartstore" {
     Environment = var.environment
   }
 
-  # Holds the key that encrypts indexed data surviving every nightly teardown —
+  # Holds the key that encrypts indexed data surviving every nightly teardown,
   # never let a destroy take it.
   lifecycle {
     prevent_destroy = true
@@ -70,7 +70,7 @@ resource "aws_s3_bucket" "smartstore" {
     Environment = var.environment
   }
 
-  # Source of truth for every byte of indexed data — never let a terraform
+  # Source of truth for every byte of indexed data, never let a terraform
   # destroy take it.
   lifecycle {
     prevent_destroy = true

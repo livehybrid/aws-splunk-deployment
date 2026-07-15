@@ -1,7 +1,7 @@
 ###############################################################################
 # defaultsUrl ConfigMaps.
 #
-# NEVER use inline spec.defaults for anything that might be edited — every
+# NEVER use inline spec.defaults for anything that might be edited, every
 # inline edit triggers a full rolling recycle of that CR's pods. A ConfigMap
 # mounted via spec.volumes (operator mounts each volume at /mnt/<name>) and
 # referenced by spec.defaultsUrl lets config changes be staged and pods
@@ -13,7 +13,7 @@
 # so splunk-ansible's `conf` key writes them into a manager-app that rides
 # the cluster bundle to every peer, layered over the operator-generated
 # volume stanza (same volume name: remote_store).
-#   - remote.s3.kms.key_id: dot form — the underscore form is silently ignored.
+#   - remote.s3.kms.key_id: dot form, the underscore form is silently ignored.
 #   - CA bundle path is the UBI9 in-container OS trust store.
 #   - values are strings so the ini writer emits lowercase true.
 ###############################################################################
@@ -29,7 +29,7 @@ locals {
     "remote.s3.kms.sslRootCAPath"       = "/etc/pki/tls/certs/ca-bundle.crt"
   }
 
-  # The SmartStore overlay manager-app (indexes.conf + app.conf) — rides the
+  # The SmartStore overlay manager-app (indexes.conf + app.conf), rides the
   # cluster bundle to every peer under both single-site and multisite.
   smartstore_conf = [
     {
@@ -56,7 +56,7 @@ locals {
 
   # Multisite only: server.conf [clustering] constrain_singlesite_buckets=false
   # lets legacy single-site buckets (bootstrapped from SmartStore before the
-  # multisite cutover) meet RF across sites — same lesson as the EC2 rollout.
+  # multisite cutover) meet RF across sites, same lesson as the EC2 rollout.
   constrain_conf = {
     key = "server"
     value = {

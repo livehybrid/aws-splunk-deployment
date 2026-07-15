@@ -4,13 +4,13 @@
 #   ./scripts/deploy-apps.sh <env> [scope]
 #
 #   scope:
-#     idx  — sync CM, then validate + apply cluster-bundle   → indexers
-#     shc  — sync deployer, then apply shcluster-bundle      → SHC members
-#     ds   — sync CM, then reload deploy-server              → DS clients
-#            (license, future UFs — they fetch on next phone-home)
-#     cm   — sync CM, then restart its splunkd               → CM's own apps
+#     idx, sync CM, then validate + apply cluster-bundle   → indexers
+#     shc, sync deployer, then apply shcluster-bundle      → SHC members
+#     ds, sync CM, then reload deploy-server              → DS clients
+#            (license, future UFs, they fetch on next phone-home)
+#     cm, sync CM, then restart its splunkd               → CM's own apps
 #            (restart is tolerated: peers buffer while the CM bounces)
-#     all  — idx + shc + ds (default; excludes the disruptive cm restart)
+#     all, idx + shc + ds (default; excludes the disruptive cm restart)
 #
 # "Sync" = /opt/splunk/bin/sync-apps-from-git.sh on the instance via SSM
 # (fresh clone, guarded rsync, splunksecret substitution).

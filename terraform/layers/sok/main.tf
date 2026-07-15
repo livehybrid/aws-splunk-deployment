@@ -1,5 +1,5 @@
 ###############################################################################
-# Locals + AWS foundation discovery (naming conventions, not remote state —
+# Locals + AWS foundation discovery (naming conventions, not remote state,
 # see the eks layer header) + the EC2/SOK exclusivity guard.
 ###############################################################################
 
@@ -15,13 +15,13 @@ locals {
   storage_class = "splunk-gp3-${var.data_volume_filesystem}"
 
   # The operator's REST client and bundle-push exec authenticate as the
-  # literal user `admin` — inside SOK the admin account is `admin`, NOT the
+  # literal user `admin`, inside SOK the admin account is `admin`, NOT the
   # estate's `splunkadmin` (deliberate, documented divergence).
   splunk_image = var.sok_splunk_image
 }
 
 # Discovered by naming convention (matching the account layer and prod). These
-# are created by the persistent sok-foundation layer — apply that first.
+# are created by the persistent sok-foundation layer, apply that first.
 data "aws_s3_bucket" "smartstore" {
   bucket = local.smartstore_bucket_name
 }

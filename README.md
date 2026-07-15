@@ -34,31 +34,31 @@ picked per workspace by `deployment_model`: **EC2** (Terraform + Packer) and
 
 **Shared / overview**
 
-- [Overview](docs/index.md) — the docs home and where-to-go index
-- [LLD workbook](docs/LLD-workbook.md) — customer decisions, RACI, assumptions, risk register (EC2 C3 reference build)
+- [Overview](docs/index.md), the docs home and where-to-go index
+- [LLD workbook](docs/LLD-workbook.md), customer decisions, RACI, assumptions, risk register (EC2 C3 reference build)
 
 **EC2 (Terraform + Packer)**
 
-- [Architecture](docs/architecture.md) — topology diagrams, multisite layout, ports
-- [Getting started](docs/getting-started.md) — AMI build, apply order, first deploy from zero
-- [Configuration reference](docs/configuration.md) — every tfvars knob (`multisite`, `data_volume_filesystem`, `ssl_verify_server_cert`, …)
-- [Operations runbook](docs/operations.md) — make targets, start/stop lifecycle
-- [Apps & deployment](docs/apps.md) — apps repo layout, per-tier deploys, fail-closed sync
-- [Security & TLS](docs/security.md) — internal PKI, cert-issuer Lambda, secrets inventory
-- [CI / GitHub Actions](docs/ci.md) — start/stop/checks/deploy/Packer/Infracost/docs workflows
-- [Troubleshooting](docs/troubleshooting.md) — the hard-won list
+- [Architecture](docs/architecture.md), topology diagrams, multisite layout, ports
+- [Getting started](docs/getting-started.md), AMI build, apply order, first deploy from zero
+- [Configuration reference](docs/configuration.md), every tfvars knob (`multisite`, `data_volume_filesystem`, `ssl_verify_server_cert`, …)
+- [Operations runbook](docs/operations.md), make targets, start/stop lifecycle
+- [Apps & deployment](docs/apps.md), apps repo layout, per-tier deploys, fail-closed sync
+- [Security & TLS](docs/security.md), internal PKI, cert-issuer Lambda, secrets inventory
+- [CI / GitHub Actions](docs/ci.md), start/stop/checks/deploy/Packer/Infracost/docs workflows
+- [Troubleshooting](docs/troubleshooting.md), the hard-won list
 
 **Kubernetes (SOK)**
 
-- [Overview](docs/kubernetes-sok-overview.md) — the working model: operator, CRs, layers, lifecycle, external access
-- [Operations runbook](docs/kubernetes-sok-runbook.md) — day-2 tasks, restart blast radius, DR posture, EKS version cliff
-- [Design study](docs/kubernetes-sok.md) — migrating the M3 build to the Splunk Operator on EKS, EC2-vs-SOK toggle design
-- [Implementation plan](docs/kubernetes-sok-plan.md) — phase-by-phase build (K1–K5), layer deltas, status
-- [Monitoring app plan](docs/kubernetes-sok-monitoring-app-plan.md) — planned in-Splunk SOK health app (OPS-4)
-- [Apps repo handoff](docs/apps-repo-handoff.md) — the git→S3→App Framework contract + queued app work
-- [Community lessons](docs/kubernetes-sok-community-lessons.md) — Gareth Anderson (SplunkTrust) digest vs this build
-- [Handoff, lessons remainder](docs/handoff-sok-lessons-remainder.md) — executable spec for the remaining Anderson items (task #55)
-- [SOK review](docs/reviews/index.md) — the four-lens (security, ops, deployment, non-functional) SOK review
+- [Overview](docs/kubernetes-sok-overview.md), the working model: operator, CRs, layers, lifecycle, external access
+- [Operations runbook](docs/kubernetes-sok-runbook.md), day-2 tasks, restart blast radius, DR posture, EKS version cliff
+- [Design study](docs/kubernetes-sok.md), migrating the M3 build to the Splunk Operator on EKS, EC2-vs-SOK toggle design
+- [Implementation plan](docs/kubernetes-sok-plan.md), phase-by-phase build (K1–K5), layer deltas, status
+- [Monitoring app plan](docs/kubernetes-sok-monitoring-app-plan.md), planned in-Splunk SOK health app (OPS-4)
+- [Apps repo handoff](docs/apps-repo-handoff.md), the git→S3→App Framework contract + queued app work
+- [Community lessons](docs/kubernetes-sok-community-lessons.md), Gareth Anderson (SplunkTrust) digest vs this build
+- [Handoff, lessons remainder](docs/handoff-sok-lessons-remainder.md), executable spec for the remaining Anderson items (task #55)
+- [SOK review](docs/reviews/index.md), the four-lens (security, ops, deployment, non-functional) SOK review
 
 ## Quickstart
 
@@ -71,11 +71,11 @@ make smoke env=prod && make health env=prod   # verify
 ```
 
 First deploy in a fresh account has one-time prerequisites (state bucket,
-hosted zone, operator secrets) — see
+hosted zone, operator secrets), see
 [Getting started](docs/getting-started.md).
 
 Day-to-day: `make` with no arguments prints every target. Cluster power
-controls (start / nightly auto-stop / checks) run as GitHub Actions — see
+controls (start / nightly auto-stop / checks) run as GitHub Actions, see
 [CI](docs/ci.md).
 
 ## Versions

@@ -9,7 +9,7 @@
 # The KV store is replicated across all SHC members; we back up from the KV store
 # captain (auto-detected, as restore does) so the copy is authoritative and we
 # never target a member that is down. Admin password is read INSIDE the pod from
-# /mnt/splunk-secrets/password — never on the command line.
+# /mnt/splunk-secrets/password, never on the command line.
 #
 # Validated end-to-end against a live dev SHC (backup -> S3 SSE-KMS ->
 # restore into the KV store captain). Override the target with KVSTORE_POD.
@@ -22,7 +22,7 @@ REGION="${AWS_REGION:-eu-west-2}"
 BUCKET="livehybrid-splunk-${ENV}-splunk-kvbackup-${ENV}"
 
 # Back up from the KV store captain (auto-detected) rather than a hardcoded
-# member — matches restore, and avoids targeting a member that is down. The
+# member, matches restore, and avoids targeting a member that is down. The
 # captain is the member whose kvstore-status "This member:" line (the first
 # replicationStatus) reports "KV store captain". Override with KVSTORE_POD.
 find_kvstore_captain() {
@@ -43,7 +43,7 @@ NAME="kvstore-${TS}"
 kubectl get pod "$POD" -n "$NS" >/dev/null 2>&1 || { echo "pod $POD not found in $NS" >&2; exit 1; }
 
 echo "== backup kvstore on $POD (name=$NAME)"
-# Capture the backup's real exit code — the old `... | grep ... || true` masked it.
+# Capture the backup's real exit code, the old `... | grep ... || true` masked it.
 set +e
 OUT=$(kubectl exec -n "$NS" "$POD" -- bash -c \
   "/opt/splunk/bin/splunk backup kvstore -archiveName ${NAME} -auth admin:\$(cat /mnt/splunk-secrets/password)" 2>&1)

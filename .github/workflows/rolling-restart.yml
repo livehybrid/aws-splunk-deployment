@@ -1,5 +1,5 @@
 ###############################################################################
-# ROLLING RESTART — CM-coordinated peer restart (role=indexer) or SHC rolling
+# ROLLING RESTART, CM-coordinated peer restart (role=indexer) or SHC rolling
 # restart (role=searchhead) on the EC2 estate, via SSM (make rolling-restart).
 # This restarts LIVE indexer peers / search-head members one at a time, so a
 # prod run requires a typed confirm=prod (mirrors sok-stop.yml's gate).
@@ -48,7 +48,7 @@ jobs:
 
       - name: Prod confirmation gate
         run: |
-          # A prod rolling restart bounces live peers/members — require
+          # A prod rolling restart bounces live peers/members, require
           # confirm=prod on dispatch. Dev needs no confirmation.
           if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
             echo "::error ::refusing to roll PROD without confirm=prod"; exit 1; fi

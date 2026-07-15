@@ -1,5 +1,5 @@
 ###############################################################################
-# Terraform CI (DEP-11) — PR-time checks with no cloud access: fmt, per-layer
+# Terraform CI (DEP-11), PR-time checks with no cloud access: fmt, per-layer
 # validate (backendless init), workflow-YAML parse, shellcheck on scripts/.
 # Plan-against-live is deliberately NOT run here (needs AWS creds + would leak
 # state details into PR logs); the start workflow's post-apply drift check
@@ -62,8 +62,8 @@ jobs:
       - name: shellcheck scripts/
         run: |
           # ubuntu-latest ships shellcheck. Non-blocking for now (legacy scripts
-          # carry a warning backlog) — findings surface as annotations. Ratchet
+          # carry a warning backlog), findings surface as annotations. Ratchet
           # to blocking (drop the || block) once the backlog is cleared.
           shellcheck -S warning -f gcc scripts/*.sh || {
-            echo "::warning ::shellcheck found issues (non-blocking for now — see log)"
+            echo "::warning ::shellcheck found issues (non-blocking for now, see log)"
           }

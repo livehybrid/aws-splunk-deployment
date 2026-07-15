@@ -1,8 +1,8 @@
 args =
 tf-command = apply
-# NO default env — guard-env must force an explicit env=<dev|prod> on every
+# NO default env, guard-env must force an explicit env=<dev|prod> on every
 # invocation. A `prod` default here meant a forgotten env= silently targeted
-# PROD (guard-env passed because the variable was never empty) — DEP-12.
+# PROD (guard-env passed because the variable was never empty), DEP-12.
 env =
 
 guard-%:
@@ -58,7 +58,7 @@ terraform-no-init: guard-env
 		terraform $(tf-command) $(args); \
 	fi
 
-# Cost estimation — Infracost reads the merged plan and produces a baseline
+# Cost estimation, Infracost reads the merged plan and produces a baseline
 # (breakdown) or a diff against a stored baseline (diff).
 infracost-breakdown: guard-env
 	infracost breakdown --path=. \

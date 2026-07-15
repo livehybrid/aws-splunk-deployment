@@ -1,5 +1,5 @@
 ###############################################################################
-# AWS Load Balancer Controller — provisions the S2S/HEC NLBs (Service type
+# AWS Load Balancer Controller, provisions the S2S/HEC NLBs (Service type
 # LoadBalancer, ip targets) and any future ALB Ingress. IAM policy is the
 # vendored upstream document (files/alb-controller-iam-policy.json, from
 # aws-load-balancer-controller v2.13.0).
@@ -7,7 +7,7 @@
 # external-dns is deliberately NOT installed yet: the dev public zone
 # (splunk.dev.livehybrid.com) is not delegated at the registrar, so there is
 # nothing it could publish that would resolve. Add it (domain-filtered) once
-# delegation exists — see docs/kubernetes-sok-plan.md K3.6.
+# delegation exists, see docs/kubernetes-sok-plan.md K3.6.
 ###############################################################################
 
 data "aws_iam_policy_document" "alb_controller_trust" {

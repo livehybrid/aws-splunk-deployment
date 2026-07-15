@@ -2,7 +2,7 @@
 # App Framework: git -> S3 (apps bucket) -> operator Download -> PodCopy.
 #
 # ONLY the operator pod reads the apps bucket (Download phase); Splunk pods
-# receive apps via PodCopy — so the SmartStore IRSA (splunk-idx) does not cover
+# receive apps via PodCopy, so the SmartStore IRSA (splunk-idx) does not cover
 # this. The operator's own ServiceAccount (splunk-operator-controller-manager,
 # created by the helm chart) gets S3 read + kms:Decrypt via this role, attached
 # through splunkOperator.annotations in the helm values (operator.tf).
@@ -71,7 +71,7 @@ resource "aws_iam_role_policy" "operator_apps" {
 }
 
 locals {
-  # App Framework volume (S3, IRSA — no secretRef). Reused by the CR appRepos.
+  # App Framework volume (S3, IRSA, no secretRef). Reused by the CR appRepos.
   appframework_volume = {
     name        = "appvol"
     storageType = "s3"
