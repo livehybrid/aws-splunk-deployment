@@ -1,0 +1,70 @@
+site_name: LiveHybrid Splunk Cluster (AWS)
+site_description: >-
+  Terraform + Packer deployment of a Splunk Enterprise multisite cluster
+  (C13) with SmartStore on S3.
+repo_url: https://github.com/livehybrid/aws-splunk-cluster
+repo_name: livehybrid/aws-splunk-cluster
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Overview:
+    - Overview: index.md
+    - LLD workbook: LLD-workbook.md
+  - EC2 (Terraform + Packer):
+    - Architecture: architecture.md
+    - Getting started: getting-started.md
+    - Configuration reference: configuration.md
+    - Operations runbook: operations.md
+    - Apps & deployment: apps.md
+    - Security & TLS: security.md
+    - CI / GitHub Actions: ci.md
+    - Troubleshooting: troubleshooting.md
+  - Kubernetes (SOK):
+    - Overview: kubernetes-sok-overview.md
+    - Operations runbook: kubernetes-sok-runbook.md
+    - Design study: kubernetes-sok.md
+    - Implementation plan: kubernetes-sok-plan.md
+    - Monitoring app plan: kubernetes-sok-monitoring-app-plan.md
+    - Apps repo handoff: apps-repo-handoff.md
+    - Community lessons: kubernetes-sok-community-lessons.md
+    - Handoff, lessons remainder: handoff-sok-lessons-remainder.md
+    - Review:
+      - Summary: reviews/index.md
+      - Security: reviews/security.md
+      - Operations: reviews/operations.md
+      - Deployment & IaC: reviews/deployment.md
+      - Non-functional: reviews/non-functional.md

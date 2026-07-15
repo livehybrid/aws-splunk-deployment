@@ -1,0 +1,85 @@
+###############################################################################
+# ROTATE ADMIN — fleet-wide rotation of the splunkadmin password on the EC2
+# estate (make rotate-admin -> scripts/rotate-splunk-admin.sh). The new
+# password is written to Secrets Manager (/monitoring/splunk/password); read it
+# back with `make password` when needed. A prod run requires confirm=prod
+# (mirrors sok-stop.yml's gate).
+#
+# SECURITY: the make target owns the rotation and the new secret NEVER leaves
+# Secrets Manager. This workflow deliberately does NOT enable shell tracing
+# (set -x), does NOT `tee`/print the script output, and reports pass/fail only —
+# so no password material can land in the Actions log or the run summary.
+#
+# On-demand only.
+###############################################################################
+name: ROTATE ADMIN (fleet-wide splunkadmin password)
+run-name: ROTATE ADMIN · ${{ inputs.env }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace"
+        type: choice
+        options: [prod, dev]
+        default: dev
+      confirm:
+        description: "Type the env name to confirm a PROD rotation (ignored for dev)"
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: splunk-deploy-${{ inputs.env }}
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env }}
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prod confirmation gate
+        run: |
+          # A prod rotation changes the live admin password fleet-wide — require
+          # confirm=prod on dispatch. Dev needs no confirmation.
+          if [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
+            echo "::error ::refusing to rotate PROD admin password without confirm=prod"; exit 1; fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-rotate-admin-${{ github.run_id }}
+
+      - name: Rotate admin password (make rotate-admin)
+        shell: bash
+        run: |
+          # DO NOT enable `set -x` and DO NOT print/tee the target's output —
+          # it may contain the new password. Redirect stdout+stderr to a file
+          # that is never uploaded, and surface pass/fail only. On failure we
+          # emit a generic message (no captured output) so nothing leaks.
+          set +x
+          if make rotate-admin env="$TARGET_ENV" > /tmp/rotate.out 2>&1; then
+            echo "## Admin password rotated ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Rotation completed. Read the new secret with \`make password\` (do not print it in CI)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error ::rotate-admin failed for $TARGET_ENV (output withheld to avoid leaking secrets — re-run locally to inspect)"
+            echo "## Admin password rotation FAILED ($TARGET_ENV)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

@@ -1,0 +1,200 @@
+###############################################################################
+# SOK STOP — the ONLY route to ~$0 overnight for deployment_model=sok: a full
+# destroy of the sok then eks layers (an EKS control plane bills ~$0.10/hr for
+# merely existing, so parking-in-place is not enough). The persistent
+# sok-foundation layer (SmartStore + apps buckets = source of truth) is NEVER
+# touched.
+#
+# Order matters:
+#   1. best-effort hot-bucket roll (dev data is disposable — see plan §5; the
+#      full per-index roll+drain is a prod/K7 requirement, supervised first).
+#   2. destroy sok — CRs, operator, and the namespace (whose deletion cascades
+#      the PVCs) go while the eks CSI driver still exists, so reclaimPolicy
+#      Delete actually deletes the EBS volumes.
+#   3. wait until no cluster-tagged EBS volumes remain (async CSI reclaim) —
+#      deleting the cluster first would orphan them and they'd bill nightly.
+#   4. destroy eks (one retry).
+#   5. verify: no cluster, no tagged EBS volumes, no ELBs.
+###############################################################################
+name: SOK STOP (destroy eks+sok)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to stop"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      confirm:
+        description: "Type the env name to confirm a PROD stop (ignored for dev)"
+        type: string
+        default: ""
+  schedule:
+    # Nightly cost guard for dev SOK: 21:30 UTC (the EC2 splunk-stop covers prod).
+    - cron: "30 21 * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: splunk-power-${{ inputs.env || 'dev' }}
+
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.11.1"
+  TARGET_ENV: ${{ inputs.env || 'dev' }}
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Prod confirmation gate
+        run: |
+          # DEP-5: a prod destroy must be deliberate — require confirm=prod on
+          # dispatch. The nightly cron only ever targets dev (TARGET_ENV default).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "$TARGET_ENV" = "prod" ] && [ "${{ inputs.confirm }}" != "prod" ]; then
+            echo "::error ::refusing to stop PROD without confirm=prod"; exit 1; fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-stop-${{ github.run_id }}
+
+      - name: Write OIDC creds into the default profile
+        run: |
+          aws configure set aws_access_key_id     "$AWS_ACCESS_KEY_ID"     --profile default
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile default
+          aws configure set aws_session_token     "$AWS_SESSION_TOKEN"     --profile default
+          aws configure set region                "$AWS_REGION"            --profile default
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Allowlist runner + roll hot buckets (best-effort)
+        run: |
+          CLUSTER=splunk-sok-$TARGET_ENV
+          aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1 || { echo "no cluster — nothing to stop"; exit 0; }
+          # The runner isn't in trusted_cidrs; append its IP so the sok destroy
+          # can reach the K8s API. The eks destroy removes the cluster, so no cleanup.
+          RUNNER_CIDR="$(curl -s https://checkip.amazonaws.com)/32"
+          CURR=$(aws eks describe-cluster --name "$CLUSTER" --query 'cluster.resourcesVpcConfig.publicAccessCidrs' --output json)
+          NEW=$(echo "$CURR" | RUNNER_CIDR="$RUNNER_CIDR" python3 -c "import json,sys,os;print(','.join(sorted(set(json.load(sys.stdin)+[os.environ['RUNNER_CIDR']]))))")
+          aws eks update-cluster-config --name "$CLUSTER" --resources-vpc-config "publicAccessCidrs=$NEW" || true
+          aws eks wait cluster-active --name "$CLUSTER" || true
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+          # Roll hot buckets so warm segments upload to SmartStore before the PVCs
+          # are deleted. Shape-agnostic selector: app.kubernetes.io/name=indexer
+          # matches single-site (splunk-idxc-indexer-*) AND multisite
+          # (splunk-idxc-siteN-indexer-*) peers. NB the cluster-manager pod also
+          # carries component=indexer, so match on name=indexer (the CM is
+          # name=cluster-manager) — the old instance=splunk-idxc-indexer selector
+          # silently rolled NOTHING on the multisite shape and deleted unrolled hot
+          # data. Every ENABLED index is rolled (enumerated via REST), not a fixed
+          # subset. Dev data is disposable (plan §5); best-effort, never fatal.
+          PEERS=$(kubectl get pods -n splunk -l app.kubernetes.io/name=indexer -o name 2>/dev/null | sed 's#^pod/##')
+          [ -z "$PEERS" ] && echo "::warning ::no indexer peers matched name=indexer — nothing rolled"
+          FIRST=$(echo "$PEERS" | head -1)
+          IDXS=""
+          if [ -n "$FIRST" ]; then
+            # `timeout` bounds each exec — a wedged splunkd must not hang the
+            # nightly stop (OPS-12); the roll stays best-effort either way.
+            IDXS=$(timeout 60 kubectl exec -n splunk "$FIRST" -- bash -c \
+              'curl -sk -m 30 -u "admin:$(cat /mnt/splunk-secrets/password)" "https://localhost:8089/services/data/indexes?output_mode=json&count=0&f=name&f=disabled"' 2>/dev/null \
+              | python3 -c 'import sys,json;print(" ".join(e["name"] for e in json.load(sys.stdin).get("entry",[]) if not e["content"].get("disabled")))' 2>/dev/null || true)
+          fi
+          echo "peers: $(echo "$PEERS" | tr "\n" " ")| indexes: ${IDXS:-<none>}"
+          for p in $PEERS; do
+            for idx in $IDXS; do
+              timeout 60 kubectl exec -n splunk "$p" -- bash -c \
+                "curl -sk -m 30 -u \"admin:\$(cat /mnt/splunk-secrets/password)\" -X POST \"https://localhost:8089/services/data/indexes/$idx/roll-hot-buckets\"" >/dev/null 2>&1 || true
+            done
+          done
+          # Give the cache manager time to push the rolled (warm) segments to S3
+          # before the PVCs die. A precise per-peer upload-queue drain is the
+          # supervised prod/K7 step; here we cap a best-effort wait.
+          sleep 60
+          # Graceful `splunk offline` per peer BEFORE terraform tears the CRs
+          # down (credit: Gareth Anderson, SplunkTrust — unclean indexer kills
+          # were his #1 cause of corrupted SmartStore buckets, and corrupt
+          # buckets PERSIST INTO S3, so "data survives in S3" doesn't cover us).
+          # --enforce-counts=false: we're stopping the whole cluster, not one
+          # peer, so don't wait for RF/SF rebalance. Best-effort, bounded.
+          for p in $PEERS; do
+            echo "offline: $p"
+            timeout 180 kubectl exec -n splunk "$p" -- bash -c \
+              '/opt/splunk/bin/splunk offline --enforce-counts=false -auth "admin:$(cat /mnt/splunk-secrets/password)"' \
+              >/dev/null 2>&1 || echo "::warning ::offline failed/timed out on $p (continuing)"
+          done
+
+      - name: Destroy sok (CRs, operator, namespace -> PVCs)
+        working-directory: terraform/layers/sok
+        run: |
+          terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
+          terraform workspace select -or-create $TARGET_ENV
+          terraform destroy -input=false -auto-approve -lock-timeout=5m -var-file=vars/$TARGET_ENV.tfvars
+
+      - name: Wait for EBS reclaim (CSI must finish before the cluster goes)
+        run: |
+          # OPS-12: destroying the cluster while CSI reclaim is in flight orphans
+          # the volumes (they then bill nightly, invisible to k8s). HARD FAIL if
+          # they haven't drained — a rerun after CSI finishes is the safe path.
+          for _ in $(seq 1 30); do
+            N=$(aws ec2 describe-volumes --filters "Name=tag-key,Values=kubernetes.io/cluster/splunk-sok-$TARGET_ENV" --query 'length(Volumes)' --output text)
+            echo "cluster-tagged EBS volumes: $N"
+            [ "$N" = "0" ] && break
+            sleep 10
+          done
+          if [ "$N" != "0" ]; then
+            echo "::error ::$N EBS volume(s) still present after 5m — refusing to destroy the cluster under them (orphan risk). Re-run once CSI reclaim completes."
+            exit 1
+          fi
+
+      - name: Destroy eks (cluster, nodes, IAM)
+        working-directory: terraform/layers/eks
+        run: |
+          terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
+          terraform workspace select -or-create $TARGET_ENV
+          terraform destroy -input=false -auto-approve -lock-timeout=5m -var-file=vars/$TARGET_ENV.tfvars \
+          || { echo "::warning ::first destroy failed; retrying once"; sleep 30; \
+               terraform destroy -input=false -auto-approve -lock-timeout=5m -var-file=vars/$TARGET_ENV.tfvars; }
+
+      - name: Verify ~$0 residual
+        run: |
+          C=$(aws eks list-clusters --query "length(clusters[?@=='splunk-sok-$TARGET_ENV'])" --output text)
+          V=$(aws ec2 describe-volumes --filters "Name=tag-key,Values=kubernetes.io/cluster/splunk-sok-$TARGET_ENV" --query 'length(Volumes)' --output text)
+          L=$(aws elbv2 describe-load-balancers --query 'length(LoadBalancers[?starts_with(LoadBalancerName,`k8s-`)])' --output text)
+          echo "## SOK $TARGET_ENV stopped" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$C" = "0" ] && [ "$V" = "0" ] && [ "$L" = "0" ]; then
+            echo "✅ No cluster, EBS volumes or ELBs remain. Residual ≈ \$1/mo (foundation KMS)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning ::residual — clusters:$C EBS:$V ELBs:$L"
+            echo "⚠️ residual — clusters:$C EBS:$V ELBs:$L" >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # OPS-4: a failed nightly stop = the cluster keeps billing overnight —
+          # the one failure that must page someone. No-op until the secret is set.
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` (cluster may still be running/billing) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$WEBHOOK" || true

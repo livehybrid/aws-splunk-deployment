@@ -1,0 +1,69 @@
+###############################################################################
+# Terraform CI (DEP-11) — PR-time checks with no cloud access: fmt, per-layer
+# validate (backendless init), workflow-YAML parse, shellcheck on scripts/.
+# Plan-against-live is deliberately NOT run here (needs AWS creds + would leak
+# state details into PR logs); the start workflow's post-apply drift check
+# covers the "does reality match config" half.
+###############################################################################
+name: Terraform CI (fmt + validate)
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.11.1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt (recursive check)
+        run: terraform fmt -check -recursive -diff terraform/
+
+      - name: terraform validate (every layer, backendless)
+        shell: bash
+        run: |
+          rc=0
+          for layer in account iam cluster eks sok sok-foundation; do
+            echo "== validate $layer"
+            ( cd "terraform/layers/$layer" \
+              && terraform init -backend=false -input=false >/dev/null \
+              && terraform validate ) || rc=1
+          done
+          exit $rc
+
+      - name: workflow YAML parses
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, yaml
+          bad = 0
+          for f in glob.glob(".github/workflows/*.yml"):
+              try:
+                  yaml.safe_load(open(f))
+              except Exception as e:
+                  print(f"::error file={f}::{e}"); bad = 1
+          sys.exit(bad)
+          EOF
+
+      - name: shellcheck scripts/
+        run: |
+          # ubuntu-latest ships shellcheck. Non-blocking for now (legacy scripts
+          # carry a warning backlog) — findings surface as annotations. Ratchet
+          # to blocking (drop the || block) once the backlog is cleared.
+          shellcheck -S warning -f gcc scripts/*.sh || {
+            echo "::warning ::shellcheck found issues (non-blocking for now — see log)"
+          }

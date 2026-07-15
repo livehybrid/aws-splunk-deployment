@@ -1,0 +1,115 @@
+###############################################################################
+# Splunk STOP — tear down all hourly-cost resources for a workspace.
+#
+# Applies the cluster layer with the <env>-shutdown.tfvars overlay, which
+# zeroes every enable_splunk_* flag: ASGs, instances, EBS cache volumes, the
+# splunk-web ALB and all NLBs are destroyed. What survives (≈$8/mo): S3
+# (incl. SmartStore data), KMS keys, Secrets, Route53, IAM, the AMI snapshot
+# and the wildcard ACM cert (kept deliberately so starts don't re-validate).
+#
+# Also runs on a nightly schedule as a cost guard — comment out the
+# `schedule:` block if you're working late.
+###############################################################################
+name: Splunk STOP (tear down cluster)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to stop"
+        type: choice
+        options: [prod, dev]
+        default: prod
+  schedule:
+    # Nightly cost guard (prod only): 21:30 UTC = 22:30 BST / 21:30 GMT.
+    # GitHub crons are UTC and queue-delayed by up to ~30-45 min at busy
+    # slots — expect the run to start somewhat after this time.
+    - cron: "30 21 * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: splunk-power-${{ inputs.env || 'prod' }}
+
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.11.1"
+  TARGET_ENV: ${{ inputs.env || 'prod' }}
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then
+            echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then
+            echo "::warning ::AWS_TERRAFORM_ROLE_ARN found in Secrets - consider moving it to Variables (an ARN is not sensitive)."
+            echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else
+            echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: github-actions-splunk-stop-${{ github.run_id }}
+
+      # The tfvars set profile="default", and an explicit profile makes the
+      # AWS SDK skip env-var credentials entirely — so write the OIDC session
+      # creds into the default profile for terraform's provider/backend.
+      - name: Write OIDC creds into the default profile
+        run: |
+          aws configure set aws_access_key_id     "$AWS_ACCESS_KEY_ID"     --profile default
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile default
+          aws configure set aws_session_token     "$AWS_SESSION_TOKEN"     --profile default
+          aws configure set region                "$AWS_REGION"            --profile default
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform apply (cluster, shutdown overlay)
+        working-directory: terraform/layers/cluster
+        run: |
+          terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
+          terraform workspace select -or-create $TARGET_ENV
+          # EIP release races instance termination (bootstrap associates EIPs
+          # outside terraform), so one retry converges the known failure mode.
+          terraform apply -input=false -auto-approve \
+            -var-file=vars/$TARGET_ENV.tfvars \
+            -var-file=vars/$TARGET_ENV-shutdown.tfvars \
+          || { echo "::warning ::first apply failed (likely EIP race); retrying once"; sleep 60; \
+            terraform apply -input=false -auto-approve \
+              -var-file=vars/$TARGET_ENV.tfvars \
+              -var-file=vars/$TARGET_ENV-shutdown.tfvars; }
+
+      - name: Verify nothing costly is left
+        run: |
+          echo "## Splunk $TARGET_ENV stopped" >> "$GITHUB_STEP_SUMMARY"
+          LEFT=$(aws ec2 describe-instances \
+            --filters Name=tag:project,Values=splunk \
+                      Name=tag:environment,Values=$TARGET_ENV \
+                      Name=instance-state-name,Values=running,pending \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          LBS=$(aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?starts_with(LoadBalancerName,`splunk`)].LoadBalancerName' \
+            --output text)
+          if [ -n "$LEFT" ] || [ -n "$LBS" ]; then
+            echo "::warning ::Still present — instances: [$LEFT] LBs: [$LBS]"
+            echo "⚠️ Still present — instances: [$LEFT] LBs: [$LBS]" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "✅ No instances or load balancers remain. Residual cost ≈ \$8/mo (S3/KMS/Secrets/R53/ACM)." >> "$GITHUB_STEP_SUMMARY"
+          fi

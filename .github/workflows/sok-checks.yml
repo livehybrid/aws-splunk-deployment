@@ -1,0 +1,142 @@
+###############################################################################
+# SOK CHECKS — run the SOK-side health check (CR phases, RF/SF, KV store,
+# licence) against a workspace running deployment_model=sok. The kubectl-exec
+# analogue of Splunk CHECKS; the AWS-side smoke test is shared with the EC2 path.
+#
+# Triggers manually, or automatically after a successful "SOK START" run (with
+# retries to ride out the ~8-10 min cluster + Splunk bring-up).
+###############################################################################
+name: SOK CHECKS (health)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Workspace to check"
+        type: choice
+        options: [dev, prod]
+        default: dev
+  workflow_run:
+    workflows: ["SOK START (bring up eks+sok)"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  TARGET_ENV: ${{ inputs.env || 'dev' }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Resolve target env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # workflow_run carries no dispatch inputs; recover the env from the
+            # START run's display title (set via run-name in sok-start.yml).
+            case "${{ github.event.workflow_run.display_title }}" in
+              *prod*) echo "TARGET_ENV=prod" >> "$GITHUB_ENV" ;;
+              *)      echo "TARGET_ENV=dev"  >> "$GITHUB_ENV" ;;
+            esac
+          else
+            echo "TARGET_ENV=${{ inputs.env || 'dev' }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Resolve AWS role
+        env:
+          ARN_VAR: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          ARN_SECRET: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+        run: |
+          if [ -n "$ARN_VAR" ]; then echo "ROLE_ARN=$ARN_VAR" >> "$GITHUB_ENV"
+          elif [ -n "$ARN_SECRET" ]; then echo "ROLE_ARN=$ARN_SECRET" >> "$GITHUB_ENV"
+          else echo "::error ::AWS_TERRAFORM_ROLE_ARN is not set"; exit 1; fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: gha-sok-checks-${{ github.run_id }}
+
+      - name: Allowlist runner + kubeconfig
+        run: |
+          CLUSTER=splunk-sok-$TARGET_ENV
+          echo "CLUSTER=$CLUSTER" >> "$GITHUB_ENV"
+          if ! aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1; then
+            echo "::error ::cluster $CLUSTER not found — is SOK started?"; exit 1; fi
+          RUNNER_CIDR="$(curl -s https://checkip.amazonaws.com)/32"
+          # Capture the CURRENT allowlist verbatim BEFORE we touch it, so the
+          # final always() step can restore exactly this set (removing only the
+          # runner /32 we add) without clobbering a legitimately-present CIDR.
+          CURR=$(aws eks describe-cluster --name "$CLUSTER" --query 'cluster.resourcesVpcConfig.publicAccessCidrs' --output json)
+          ORIG=$(echo "$CURR" | python3 -c "import json,sys;print(','.join(sorted(set(json.load(sys.stdin)))))")
+          echo "ORIG_PUBLIC_CIDRS=$ORIG" >> "$GITHUB_ENV"
+          NEW=$(echo "$CURR" | RUNNER_CIDR="$RUNNER_CIDR" python3 -c "import json,sys,os;print(','.join(sorted(set(json.load(sys.stdin)+[os.environ['RUNNER_CIDR']]))))")
+          # Only mutate (and thus schedule a restore) if the runner /32 was not
+          # already allowlisted — otherwise ORIG already includes it and the
+          # restore is a harmless no-op.
+          if [ "$NEW" != "$ORIG" ]; then
+            echo "CIDRS_MODIFIED=1" >> "$GITHUB_ENV"
+            aws eks update-cluster-config --name "$CLUSTER" --resources-vpc-config "publicAccessCidrs=$NEW" || true
+            aws eks wait cluster-active --name "$CLUSTER" || true
+          fi
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION"
+
+      - name: SOK health (12 x 120s retry envelope)
+        # shell: bash gives `-o pipefail`, so `sok-health.sh | tee` reflects the
+        # SCRIPT's exit code, not tee's (always 0). Without this the check could
+        # never fail — it was green even when the cluster was unhealthy.
+        shell: bash
+        run: |
+          for i in $(seq 1 12); do
+            echo "== attempt $i/12"
+            if ./scripts/sok-health.sh "$TARGET_ENV" | tee /tmp/sok-health.log; then
+              echo "✅ SOK $TARGET_ENV healthy" >> "$GITHUB_STEP_SUMMARY"
+              tail -20 /tmp/sok-health.log >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 120
+          done
+          echo "::error ::SOK health checks did not pass within the retry window"
+          echo "❌ SOK $TARGET_ENV unhealthy" >> "$GITHUB_STEP_SUMMARY"
+          tail -30 /tmp/sok-health.log >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # OPS-4: an unhealthy post-start cluster needs a human. No-op until the
+          # SLACK_WEBHOOK_URL secret is set.
+          [ -z "$WEBHOOK" ] && { echo "SLACK_WEBHOOK_URL not set — skipping notify"; exit 0; }
+          curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\":rotating_light: *${{ github.workflow }}* failed for \`$TARGET_ENV\` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$WEBHOOK" || true
+
+      # SEC-7: always remove the runner /32 we appended so the EKS allowlist
+      # does not accumulate stale IPs. Restores publicAccessCidrs to the exact
+      # set captured before the check, so it never clobbers a legitimately
+      # present CIDR. Runs even when the health check fails.
+      - name: Restore EKS allowlist (remove runner /32)
+        if: always()
+        run: |
+          if [ -z "$CIDRS_MODIFIED" ]; then
+            echo "Allowlist was not modified (runner /32 already present or setup did not run) — nothing to restore."
+            exit 0
+          fi
+          if [ -z "$ORIG_PUBLIC_CIDRS" ] || [ -z "$CLUSTER" ]; then
+            echo "::warning ::original allowlist or cluster name not captured — cannot restore automatically"
+            exit 0
+          fi
+          echo "Restoring publicAccessCidrs for $CLUSTER to: $ORIG_PUBLIC_CIDRS"
+          aws eks update-cluster-config --name "$CLUSTER" \
+            --resources-vpc-config "publicAccessCidrs=$ORIG_PUBLIC_CIDRS" || \
+            echo "::warning ::failed to restore allowlist for $CLUSTER — check publicAccessCidrs manually"
+          aws eks wait cluster-active --name "$CLUSTER" || true

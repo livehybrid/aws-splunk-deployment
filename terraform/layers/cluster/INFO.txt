@@ -1,0 +1,8 @@
+
+TODO - Split Deployment/Master
+"Do not colocate a deployment server on the master under any circumstances.
+http://docs.splunk.com/Documentation/Splunk/6.6.2/Indexer/Systemrequirements#Additional_roles_for_the_master_node
+A master node and a deployment server both consume significant system resources while performing their tasks. The master node needs reliable and continuous access to resources to perform the ongoing management of the cluster, and the deployment server can easily overwhelm those resources while deploying updates to its deployment clients."
+
+
+#/opt/splunk/bin/splunk apply shcluster-bundle -target https://192.168.84.111:8089 -auth admin:dfdfdfdf

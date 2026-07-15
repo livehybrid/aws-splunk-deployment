@@ -1,0 +1,197 @@
+###############################################################################
+# LiveHybrid Splunk C3 — CI/CD.
+#
+# fmt → validate (per layer × workspace) → plan (MR-gated, artifact) →
+# infracost-diff (comments cost delta on the MR) → apply (manual, prod only).
+#
+# Drift-detect runs nightly against prod and pings Slack on any non-zero diff.
+###############################################################################
+
+image: hashicorp/terraform:1.10
+
+variables:
+  TF_IN_AUTOMATION: "true"
+
+before_script:
+  - terraform --version
+
+stages:
+  - fmt
+  - validate
+  - plan
+  - infracost
+  - apply
+
+###############################################################################
+# fmt
+###############################################################################
+
+terraform-fmt:
+  stage: fmt
+  script:
+    - terraform fmt -recursive -check terraform/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+###############################################################################
+# validate
+###############################################################################
+
+.validate-template: &validate-template
+  stage: validate
+  before_script:
+    - apk add --no-cache make jq
+    - terraform --version
+  script:
+    - cd terraform/layers/$LAYER
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+validate-account-prod:
+  <<: *validate-template
+  variables: { LAYER: account, ENV: prod }
+validate-iam-prod:
+  <<: *validate-template
+  variables: { LAYER: iam, ENV: prod }
+validate-cluster-prod:
+  <<: *validate-template
+  variables: { LAYER: cluster, ENV: prod }
+validate-account-dev:
+  <<: *validate-template
+  variables: { LAYER: account, ENV: dev }
+validate-iam-dev:
+  <<: *validate-template
+  variables: { LAYER: iam, ENV: dev }
+validate-cluster-dev:
+  <<: *validate-template
+  variables: { LAYER: cluster, ENV: dev }
+
+###############################################################################
+# plan — MR-gated; artifact uploaded for the apply stage.
+###############################################################################
+
+.plan-template: &plan-template
+  stage: plan
+  before_script:
+    - apk add --no-cache make jq aws-cli
+    - terraform --version
+  script:
+    - cd terraform/layers/$LAYER
+    - make terraform-plan env=$ENV
+  artifacts:
+    paths:
+      - terraform/layers/$LAYER/plan-$ENV.tfplan
+      - terraform/layers/$LAYER/plan-$ENV.json
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+plan-account-prod:
+  <<: *plan-template
+  variables: { LAYER: account, ENV: prod }
+plan-iam-prod:
+  <<: *plan-template
+  variables: { LAYER: iam, ENV: prod }
+  needs: [plan-account-prod]
+plan-cluster-prod:
+  <<: *plan-template
+  variables: { LAYER: cluster, ENV: prod }
+  needs: [plan-iam-prod]
+
+plan-account-dev:
+  <<: *plan-template
+  variables: { LAYER: account, ENV: dev }
+plan-iam-dev:
+  <<: *plan-template
+  variables: { LAYER: iam, ENV: dev }
+  needs: [plan-account-dev]
+plan-cluster-dev:
+  <<: *plan-template
+  variables: { LAYER: cluster, ENV: dev }
+  needs: [plan-iam-dev]
+
+###############################################################################
+# infracost diff — posts a cost-delta MR comment.
+###############################################################################
+
+infracost-diff:
+  stage: infracost
+  image: infracost/infracost:ci-0.10
+  script:
+    - cd terraform/layers/cluster
+    - infracost diff
+        --path .
+        --terraform-var-file vars/prod.tfvars
+        --terraform-workspace prod
+        --compare-to infracost-base-prod.json
+        --format json
+        --out-file /tmp/infracost-prod.json
+    - infracost comment gitlab
+        --path /tmp/infracost-prod.json
+        --gitlab-server-url $CI_SERVER_URL
+        --repo $CI_PROJECT_PATH
+        --merge-request $CI_MERGE_REQUEST_IID
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  needs: [plan-cluster-prod]
+
+###############################################################################
+# apply — manual, prod only after MR merged to main.
+###############################################################################
+
+.apply-template: &apply-template
+  stage: apply
+  before_script:
+    - apk add --no-cache make jq aws-cli
+    - terraform --version
+  script:
+    - cd terraform/layers/$LAYER
+    - terraform init -var-file=vars/$ENV.tfvars -backend-config=conf/$ENV.backend.conf
+    - if terraform workspace list | grep -q $ENV; then terraform workspace select $ENV; else terraform workspace new $ENV; fi
+    - terraform apply -input=false plan-$ENV.tfplan
+  when: manual
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+apply-account-prod:
+  <<: *apply-template
+  variables: { LAYER: account, ENV: prod }
+apply-iam-prod:
+  <<: *apply-template
+  variables: { LAYER: iam, ENV: prod }
+  needs: [apply-account-prod]
+apply-cluster-prod:
+  <<: *apply-template
+  variables: { LAYER: cluster, ENV: prod }
+  needs: [apply-iam-prod]
+
+###############################################################################
+# Nightly drift detection — runs `terraform plan` against prod and alerts on diff.
+###############################################################################
+
+drift-detection:
+  stage: plan
+  image: hashicorp/terraform:1.10
+  before_script:
+    - apk add --no-cache jq curl aws-cli
+  script:
+    - cd terraform/layers/cluster
+    - terraform init -var-file=vars/prod.tfvars -backend-config=conf/prod.backend.conf
+    - terraform workspace select prod
+    - set +e
+    - terraform plan -detailed-exitcode -var-file=vars/prod.tfvars -out=/tmp/drift.tfplan
+    - rc=$?
+    - set -e
+    - |
+      if [ $rc -eq 2 ]; then
+        SLACK_URL=$(aws secretsmanager get-secret-value --secret-id /monitoring/alerts/slack_webhook --query SecretString --output text)
+        curl -fsSL -X POST -H "Content-Type: application/json" \
+          -d "{\"text\":\"\\u26a0\\ufe0f Splunk prod has drift — see $CI_JOB_URL\"}" \
+          "$SLACK_URL"
+        exit 1
+      fi
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
