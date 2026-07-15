@@ -1,9 +1,8 @@
 ###############################################################################
 # SOK STOP — the ONLY route to ~$0 overnight for deployment_model=sok: a full
 # destroy of the sok then eks layers (an EKS control plane bills ~$0.10/hr for
-# merely existing, so parking-in-place is not enough). The persistent
-# sok-foundation layer (SmartStore + apps buckets = source of truth) is NEVER
-# touched.
+# merely existing, so parking-in-place is not enough). The persistent account
+# layer (SmartStore + apps buckets = source of truth) is NEVER touched.
 #
 # Order matters:
 #   1. best-effort hot-bucket roll (dev data is disposable — see plan §5; the

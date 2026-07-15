@@ -1,9 +1,9 @@
-site_name: LiveHybrid Splunk Cluster (AWS)
+site_name: AWS Splunk SOK Deployment
 site_description: >-
-  Terraform + Packer deployment of a Splunk Enterprise multisite cluster
-  (C13) with SmartStore on S3.
-repo_url: https://github.com/livehybrid/aws-splunk-cluster
-repo_name: livehybrid/aws-splunk-cluster
+  Terraform deployment of Splunk Enterprise on EKS via the Splunk Operator
+  for Kubernetes (SOK), with SmartStore on S3.
+repo_url: https://github.com/livehybrid/aws-splunk-deployment
+repo_name: livehybrid/aws-splunk-deployment
 edit_uri: edit/master/docs/
 
 theme:
@@ -43,25 +43,20 @@ markdown_extensions:
 nav:
   - Overview:
     - Overview: index.md
-    - LLD workbook: LLD-workbook.md
-  - EC2 (Terraform + Packer):
-    - Architecture: architecture.md
     - Getting started: getting-started.md
+    - LLD workbook: LLD-workbook.md
+  - Guide:
     - Configuration reference: configuration.md
     - Operations runbook: operations.md
     - Apps & deployment: apps.md
     - Security & TLS: security.md
     - CI / GitHub Actions: ci.md
-    - Troubleshooting: troubleshooting.md
   - Kubernetes (SOK):
     - Overview: kubernetes-sok-overview.md
     - Operations runbook: kubernetes-sok-runbook.md
     - Design study: kubernetes-sok.md
     - Implementation plan: kubernetes-sok-plan.md
-    - Monitoring app plan: kubernetes-sok-monitoring-app-plan.md
-    - Apps repo handoff: apps-repo-handoff.md
     - Community lessons: kubernetes-sok-community-lessons.md
-    - Handoff, lessons remainder: handoff-sok-lessons-remainder.md
     - Review:
       - Summary: reviews/index.md
       - Security: reviews/security.md

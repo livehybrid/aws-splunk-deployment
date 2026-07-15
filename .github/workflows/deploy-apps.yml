@@ -3,7 +3,6 @@
 # bucket (git -> S3 -> operator Download -> PodCopy), and build+ship the SOK
 # console UCC add-on (Splunk_TA_sok_console) to the same sh-apps/ prefix.
 #
-# This is the SOK counterpart of splunk-deploy-apps.yml (EC2, SSM git-sync).
 # Manual dispatch only — never auto-deploy on push. A prod deploy touches the
 # live estate, so it requires confirm=prod (mirrors sok-stop.yml).
 #

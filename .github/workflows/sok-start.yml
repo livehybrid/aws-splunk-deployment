@@ -2,8 +2,8 @@
 # SOK START — bring up the eks + sok layers for a workspace (deployment_model
 # = sok). Applies eks (cluster/nodes/storage/ALB) then sok (operator/CRDs/CRs).
 #
-# The sok-foundation layer (SmartStore + apps buckets) is PERSISTENT and assumed
-# already applied — it is never part of this start/stop cycle.
+# The account layer (SmartStore + apps buckets + HEC secret) is PERSISTENT and
+# assumed already applied — it is never part of this start/stop cycle.
 #
 # GitHub-hosted runners aren't in trusted_cidrs, so the runner's egress IP is
 # passed to eks as eks_public_access_cidrs (appended to trusted_cidrs) — the
@@ -104,10 +104,9 @@ jobs:
       - name: Apply sok (operator + CRDs + CRs)
         working-directory: terraform/layers/sok
         run: |
-          # The web-ingress DNS waiter (scripts/sok-web-dns.sh, a local-exec
-          # provisioner) polls the Ingress with RAW kubectl — unlike the layer's
-          # providers it reads ~/.kube/config, so the kubeconfig must exist
-          # BEFORE this apply or the provisioner times out and fails the start.
+          # The web-ingress now uses kubernetes_manifest with a wait{fields} on the
+          # ALB hostname (native provider, exec-token auth) — no raw-kubectl poller.
+          # Refresh the kubeconfig anyway so any post-apply kubectl (checks) works.
           aws eks update-kubeconfig --name splunk-sok-$TARGET_ENV --region "$AWS_REGION"
           terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
           terraform workspace select -or-create $TARGET_ENV

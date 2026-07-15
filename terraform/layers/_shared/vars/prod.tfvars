@@ -23,7 +23,7 @@ default_subnet_c_cidr = "192.168.10.128/26"
 
 
 # C3 roles.
-enable_shc                       = true
+enable_shc = true
 
 # Topology — multisite indexer cluster: 2 indexers per AZ across 2 AZs
 # (site1 = eu-west-2a, site2 = eu-west-2b). SHC stays 3 members across
@@ -98,7 +98,7 @@ trusted_cidrs = [
 #   operator accepts 2 indexers/site at origin:2 before this is applied.
 ###############################################################################
 sok_accept_splunk_general_terms = "--accept-sgt-current-at-splunk-com"
-sok_indexer_replicas            = 2    # PER SITE (2 sites => 4 indexers)
+sok_indexer_replicas            = 2 # PER SITE (2 sites => 4 indexers)
 sok_etc_storage                 = "20Gi"
 sok_var_storage                 = "200Gi" # SmartStore cache — no operator resize
 

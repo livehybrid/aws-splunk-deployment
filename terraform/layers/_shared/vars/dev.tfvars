@@ -25,7 +25,7 @@ default_subnet_c_cidr = "192.168.20.128/26"
 
 ###############################################################################
 # Deployment model: dev runs the SOK (Splunk Operator for Kubernetes) path —
-# eks + sok layers; the EC2 Splunk core is retired by deployment_model below.
+# eks + sok layers (SOK is the only deployment model).
 # No hybrid edge tier in dev (no HFs deployed, no dev AMI baked).
 # sok_accept_splunk_general_terms is MANDATORY for Splunk 10.x containers:
 # https://www.splunk.com/en_us/legal/splunk-general-terms.html
@@ -77,14 +77,14 @@ eks_node_groups = {
 }
 
 # Same roles enabled as prod, but SHC suppressed (1 SH is fine for dev).
-enable_shc                       = false
+enable_shc = false
 
 # S0a min-shape: a single indexer (RF=1/SF=1) to keep dev infra cost minimal.
 # The operator MAY floor single-site clusters at 3 peers (docs: "minimum 3") —
 # if it rejects/floors this, revert to replicas=3/RF=3/SF=2.
-replication_factor        = 1
-search_factor             = 1
-sok_indexer_replicas      = 1
+replication_factor   = 1
+search_factor        = 1
+sok_indexer_replicas = 1
 
 
 

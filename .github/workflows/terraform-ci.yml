@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           rc=0
-          for layer in account iam cluster eks sok sok-foundation; do
+          for layer in account iam eks sok; do
             echo "== validate $layer"
             ( cd "terraform/layers/$layer" \
               && terraform init -backend=false -input=false >/dev/null \
