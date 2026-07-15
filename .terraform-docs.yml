@@ -1,0 +1,40 @@
+# terraform-docs config: inject a generated reference into each layer/module
+# README between the BEGIN_TF_DOCS/END_TF_DOCS markers.
+#   make terraform-docs            regenerate all
+#   CI: .github/workflows/terraform-docs.yml verifies it is current
+formatter: "markdown table"
+
+content: |-
+  {{ .Requirements }}
+
+  {{ .Providers }}
+
+  {{ .Modules }}
+
+  {{ .Resources }}
+
+  {{ .Inputs }}
+
+  {{ .Outputs }}
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+sort:
+  enabled: true
+  by: name
+
+settings:
+  anchor: true
+  color: false
+  description: true
+  hide-empty: true
+  indent: 2
+  required: true
+  sensitive: true
+  type: true

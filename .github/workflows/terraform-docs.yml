@@ -1,0 +1,44 @@
+###############################################################################
+# terraform-docs freshness check. Renders the per-layer/module README reference
+# (make terraform-docs) and fails if it drifts from what is committed, so the
+# generated docs stay in lockstep with the .tf. Regenerate locally with
+# `make terraform-docs` and commit.
+###############################################################################
+name: terraform-docs
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".terraform-docs.yml"
+      - ".github/workflows/terraform-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_DOCS_VERSION: "0.19.0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install terraform-docs
+        run: |
+          url="https://github.com/terraform-docs/terraform-docs/releases/download/v${TERRAFORM_DOCS_VERSION}/terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "$url" | tar -xz terraform-docs
+          install -m 0755 terraform-docs /usr/local/bin/terraform-docs
+          terraform-docs --version
+
+      - name: Regenerate the README reference
+        run: make terraform-docs
+
+      - name: Fail if the generated docs are out of date
+        run: |
+          if ! git diff --exit-code -- '**/README.md'; then
+            echo "::error ::terraform-docs is out of date. Run 'make terraform-docs' and commit the result."
+            exit 1
+          fi

@@ -144,3 +144,13 @@ docs-serve: ## live-preview the docs on http://127.0.0.1:8000
 docs-build: ## strict docs build (same as CI)
 	@command -v mkdocs >/dev/null || pip install mkdocs-material
 	mkdocs build --strict
+
+########################################################################################################################
+## terraform-docs, per-layer/module README reference (BEGIN_TF_DOCS markers).
+########################################################################################################################
+
+tf_doc_dirs := terraform/layers/account terraform/layers/iam terraform/layers/eks terraform/layers/sok terraform/layers/_shared terraform/modules/s3_bucket_policy
+
+terraform-docs: ## regenerate the per-layer/module README reference (needs terraform-docs)
+	@command -v terraform-docs >/dev/null || { echo "terraform-docs not found: https://terraform-docs.io/user-guide/installation/"; exit 1; }
+	@for d in $(tf_doc_dirs); do terraform-docs -c .terraform-docs.yml "$$d" >/dev/null && echo "  $$d/README.md"; done
