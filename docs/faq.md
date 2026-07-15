@@ -197,29 +197,31 @@ The CRD is the reference:
 The SplunkAdmins search rebuilds the monitoring console's distributed-search
 config when peers change, and it does `| lookup dmc_assets ...` several times.
 `dmc_assets` is owned by the built-in `splunk_monitoring_console` app and the
-search runs in the **SplunkAdmins** app context, so the intuitive theory is that
-`dmc_assets` is not shared globally and the `| lookup` cannot resolve it.
+search runs in the **SplunkAdmins** app context, so unless `dmc_assets` is shared
+**globally** the `| lookup` cannot resolve it and the search fails, leaving new
+indexers stuck in the MC "New" state.
 
-**Tested on the dev cluster (2026-07-15): that theory does not hold on this
-build.** `dmc_assets`, both the lookup definition and its `assets.csv` table
-file, is already **global** out of the box, `| lookup dmc_assets` resolves fine
-from the SplunkAdmins context, and the MC-apply search runs to completion with no
-error messages. So lookup sharing is not the gap here. If the search failed
-during a demo, the likelier causes are that the MC apps were not deployed yet at
-that moment (the `| curl` command comes from `TA-webtools`, so the search errors
-if that add-on is absent), or the new peers had not finished registering.
+**Verified on the dev cluster (2026-07-15):** the MC app's `default.meta` is
+`[] export = none`, so `dmc_assets` is **app-scoped by default** and does not
+resolve from the SplunkAdmins context out of the box. The fix is to make the
+`dmc_assets` lookup definition and its `assets.csv` table file global.
 
-If you ever do hit a build where `dmc_assets` genuinely is app-scoped, the fix is
-to make it global (`sharing=global` on `data/transforms/lookups/dmc_assets` and
-its table file). Because `splunk_monitoring_console` is a default app baked into
-the image (its ACLs reset every rebuild, and the App Framework delivers whole
-apps, not overlays of a built-in app), deliver that either as a **separate-named
-setup app** that sets the ACL by REST on a schedule, or by **baking a `local.meta`
-into a custom image**. Do **not** push a same-named `splunk_monitoring_console`
-package to overlay it: the App Framework can replace the whole app directory,
-wiping the built-in MC app. Either way it is an app / runtime change, not a
-Terraform CR change, so it goes via the App Framework or REST, never `make
-sok-apply`.
+Because `splunk_monitoring_console` is a **default Splunk app baked into the
+image** (its ACLs reset on every pod rebuild, and the App Framework delivers whole
+apps, not overlays of a built-in app), we deliver the fix as a small separate app,
+**`org_mc_lookup_acl`** (in `splunk-apps/mc-apps/`): a scheduled search that POSTs
+`sharing=global` to the REST ACL endpoints for the definition and the table file,
+idempotently, so it re-applies on every rebuild. Confirmed on dev: the search runs
+`status=success`, writes `[transforms/dmc_assets] export = system` into the MC
+app's `local.meta`, and the SplunkAdmins MC-apply search then resolves `dmc_assets`
+and runs clean. Deliver it with `make sok-deploy-apps env=dev scope=mc`.
+
+Do **not** instead push a same-named `splunk_monitoring_console` package to overlay
+the built-in app: the App Framework delivers whole packages, so it can replace the
+whole directory and wipe the built-in MC app. A separate-named setup app (as
+above), or baking a `local.meta` into a custom image, are the safe routes. Either
+way this is a `splunk-apps` / runtime change, **not** a Terraform CR change, so it
+ships via the App Framework or a runtime REST call, not `make sok-apply`.
 
 ## Data and lifecycle
 
