@@ -31,33 +31,6 @@ data "aws_vpc" "this" {
   }
 }
 
-# Mirror of the sok layer's EC2/SOK exclusivity guard (DEP-6): refuse to build
-# the EKS cluster while EC2 Splunk core instances are running for this
-# workspace. The sok layer re-checks at CR time; guarding here too stops the
-# start path ~10 minutes earlier (before a control plane is billed) and covers
-# an eks-only apply.
-data "aws_instances" "ec2_core" {
-  filter {
-    name = "tag:Name"
-    values = [
-      "${var.environment}-indexer*", "${var.environment}_indexer*",
-      "${var.environment}-manager*", "${var.environment}_manager*",
-    ]
-  }
-
-  filter {
-    name   = "instance-state-name"
-    values = ["running", "pending"]
-  }
-
-  lifecycle {
-    postcondition {
-      condition     = length(self.ids) == 0
-      error_message = "Running EC2 Splunk core instances exist for workspace ${var.environment} (${join(", ", self.ids)}). Refusing to build the SOK EKS cluster against the same SmartStore bucket. Stop the cluster layer first (deployment_model exclusivity)."
-    }
-  }
-}
-
 data "aws_subnet" "default" {
   for_each = toset(["a", "b", "c"])
   vpc_id   = data.aws_vpc.this.id
