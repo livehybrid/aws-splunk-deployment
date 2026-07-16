@@ -88,7 +88,7 @@ jobs:
       - name: Ensure the CI role can reach the cluster (self-heal access entry)
         run: |
           CLUSTER=splunk-sok-$TARGET_ENV
-          aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1 || { echo "no cluster — nothing to do"; exit 0; }
+          aws eks describe-cluster --name "$CLUSTER" >/dev/null 2>&1 || { echo "no cluster, nothing to do"; exit 0; }
           # The sok/eks destroy runs the kubernetes + kubectl providers, which
           # authenticate to the EKS API as this CI role. If the role's access entry
           # was removed out of band (drift / a manual change), every kubectl and the
