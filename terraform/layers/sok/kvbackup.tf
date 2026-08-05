@@ -18,7 +18,7 @@
 
 data "aws_s3_bucket" "kvbackup" {
   count  = var.enable_shc ? 1 : 0
-  bucket = "livehybrid-splunk-${var.environment}-splunk-kvbackup-${var.environment}"
+  bucket = "${var.bucket_prefix}-${var.environment}-splunk-kvbackup"
 }
 
 data "aws_iam_policy_document" "kvbackup_trust" {

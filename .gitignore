@@ -45,3 +45,7 @@ __pycache__/
 site/
 
 .infracost
+
+# Real (un-redacted) personal deployment vars, never publish these.
+**/vars/livehybrid.tfvars
+**/vars/develop.tfvars

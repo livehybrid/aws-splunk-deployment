@@ -8,7 +8,7 @@ locals {
   # every Splunk CR must share it (namespace-scoped WATCH_NAMESPACE).
   namespace = var.sok_namespace
 
-  smartstore_bucket_name = "livehybrid-splunk-${var.environment}-splunk-smartstore-${var.environment}"
+  smartstore_bucket_name = "${var.bucket_prefix}-${var.environment}-splunk-smartstore"
 
   # data_volume_filesystem (shared knob, xfs|ext4) picks the StorageClass the
   # CR volume configs reference.
@@ -20,8 +20,8 @@ locals {
   splunk_image = var.sok_splunk_image
 }
 
-# Discovered by naming convention (matching the account layer and prod). These
-# are created by the persistent account layer, apply that first.
+# Discovered by naming convention (matching the foundation layer). These are
+# created by the persistent foundation layer, apply that first.
 data "aws_s3_bucket" "smartstore" {
   bucket = local.smartstore_bucket_name
 }

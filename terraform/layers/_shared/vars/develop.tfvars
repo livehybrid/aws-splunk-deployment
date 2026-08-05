@@ -68,10 +68,15 @@ eks_console_admin_principal_arns = [
 # the $0.10/hr control plane. No autoscaler, so desired is what runs.
 eks_node_groups = {
   general-a = {
-    instance_type     = "t3.xlarge"
-    desired           = 1
+    instance_type = "t3.xlarge"
+    # 2 nodes (~29Gi allocatable) to fit CM/LM/MC/SH + 3 indexers (each 2Gi
+    # request); one t3.xlarge can't. No cluster-autoscaler in dev, so desired
+    # must be raised explicitly. Keep min=1 (< desired): raising min above the
+    # node group's current desired size is rejected by the EKS API
+    # ("Minimum capacity N can't be greater than desired size M").
+    desired           = 2
     min               = 1
-    max               = 2 # desired=1 runs; max=2 leaves headroom for a node roll
+    max               = 3
     availability_zone = "eu-west-2a"
   }
 }
@@ -82,9 +87,11 @@ enable_shc = false
 # S0a min-shape: a single indexer (RF=1/SF=1) to keep dev infra cost minimal.
 # The operator MAY floor single-site clusters at 3 peers (docs: "minimum 3"),
 # if it rejects/floors this, revert to replicas=3/RF=3/SF=2.
-replication_factor   = 1
-search_factor        = 1
-sok_indexer_replicas = 1
+replication_factor        = 1
+search_factor             = 1
+sok_indexer_replicas      = 1
+indexer_cache_volume_size = 30
+use_spot                  = true
 
 
 

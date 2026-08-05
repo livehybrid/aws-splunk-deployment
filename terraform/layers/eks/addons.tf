@@ -10,6 +10,29 @@
 # delegation exists, see docs/kubernetes-sok-plan.md K3.6.
 ###############################################################################
 
+###############################################################################
+# ECR pull-through cache (mirrors public.ecr.aws, see account layer ecr.tf).
+###############################################################################
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  ecr_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
+}
+
+resource "aws_iam_policy" "ecr_pull_through_cache" {
+  name = "${local.cluster_name}-ecr-pull-through-cache"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "EcrPullThroughCache"
+      Effect   = "Allow"
+      Action   = ["ecr:BatchImportUpstreamImage", "ecr:CreateRepository"]
+      Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*"
+    }]
+  })
+}
+
 data "aws_iam_policy_document" "alb_controller_trust" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -73,5 +96,20 @@ resource "helm_release" "alb_controller" {
     value = aws_iam_role.alb_controller.arn
   }
 
+  # Pull via the account layer's ECR pull-through cache instead of directly
+  # from public.ecr.aws (no VPC endpoint / PrivateLink for ECR Public exists),
+  # so this keeps working even on nodes with no internet egress. Chart default
+  # otherwise resolves to public.ecr.aws/eks/aws-load-balancer-controller.
+  set {
+    name  = "image.repository"
+    value = "${local.ecr_registry}/ecr-public/eks/aws-load-balancer-controller"
+  }
+  set {
+    name  = "image.tag"
+    value = "v2.13.0"
+  }
+
+  # module.eks attaches the ecr_pull_through_cache policy to the node role
+  # (iam_role_additional_policies, eks.tf) before any pod on it can pull.
   depends_on = [module.eks]
 }
