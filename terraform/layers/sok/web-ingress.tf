@@ -197,7 +197,10 @@ resource "kubernetes_manifest" "web_ingress" {
 
   # Block the apply until the AWS Load Balancer Controller provisions the ALB and
   # writes its DNS name into the Ingress status, that hostname is what the Route53
-  # records below point at. Replaces the old sok-web-dns.sh poll-in-local-exec.
+  # records below point at (read back via the kubernetes_ingress_v1 data source,
+  # see below - kubernetes_manifest's own .object never exposes server-populated
+  # fields like status, computed_fields or not). Replaces the old
+  # sok-web-dns.sh poll-in-local-exec.
   wait {
     fields = {
       "status.loadBalancer.ingress[0].hostname" = "^.+$"
@@ -284,6 +287,28 @@ resource "kubernetes_manifest" "hec_ingress" {
   depends_on = [kubernetes_manifest.web_ingress]
 }
 
+# kubernetes_manifest's .object attribute only ever reflects the fields set in
+# the input manifest (annotations/labels), never server-populated ones like
+# status - regardless of the wait{} block succeeding. Read the ALB hostname
+# back through a typed data source instead, which has a real status schema.
+data "kubernetes_ingress_v1" "web" {
+  count = local.web_external_enabled ? 1 : 0
+  metadata {
+    name      = "splunk-web"
+    namespace = local.namespace
+  }
+  depends_on = [kubernetes_manifest.web_ingress]
+}
+
+data "kubernetes_ingress_v1" "hec" {
+  count = local.hec_external_enabled ? 1 : 0
+  metadata {
+    name      = "splunk-hec"
+    namespace = local.namespace
+  }
+  depends_on = [kubernetes_manifest.hec_ingress]
+}
+
 # The ALB is provisioned by the controller AFTER the Ingress and shared by both
 # Ingresses (same group.name), so its DNS name is unknown until apply time. The
 # kubernetes_manifest `wait` blocks above hold the apply until the controller
@@ -297,7 +322,7 @@ resource "aws_route53_record" "web" {
   name    = each.value
   type    = "CNAME"
   ttl     = 60
-  records = [kubernetes_manifest.web_ingress[0].object.status.loadBalancer.ingress[0].hostname]
+  records = [data.kubernetes_ingress_v1.web[0].status[0].load_balancer[0].ingress[0].hostname]
 }
 
 resource "aws_route53_record" "hec" {
@@ -307,5 +332,5 @@ resource "aws_route53_record" "hec" {
   name    = local.hec_host
   type    = "CNAME"
   ttl     = 60
-  records = [kubernetes_manifest.hec_ingress[0].object.status.loadBalancer.ingress[0].hostname]
+  records = [data.kubernetes_ingress_v1.hec[0].status[0].load_balancer[0].ingress[0].hostname]
 }

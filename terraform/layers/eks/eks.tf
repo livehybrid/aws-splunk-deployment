@@ -113,13 +113,22 @@ module "eks" {
     for name, ng in var.eks_node_groups : name => {
       ami_type       = "AL2023_x86_64_STANDARD"
       instance_types = [ng.instance_type]
-      capacity_type  = "ON_DEMAND"
+      capacity_type  = var.use_spot ? "SPOT" : "ON_DEMAND"
 
       desired_size = ng.desired
       min_size     = ng.min
       max_size     = ng.max
 
       subnet_ids = [local.subnet_by_az[ng.availability_zone]]
+
+      # Beyond the module's default AmazonEC2ContainerRegistryReadOnly: pulling
+      # THROUGH the account layer's ECR pull-through cache (ecr.tf, mirrors
+      # public.ecr.aws) needs ecr:BatchImportUpstreamImage, and
+      # ecr:CreateRepository since the cache auto-creates the private repo on
+      # each image's first pull.
+      iam_role_additional_policies = {
+        ecr_pull_through_cache = aws_iam_policy.ecr_pull_through_cache.arn
+      }
 
       cloudinit_pre_nodeadm = [
         {

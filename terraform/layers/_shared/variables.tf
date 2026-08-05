@@ -20,6 +20,12 @@ variable "state_bucket" {
   description = "S3 bucket holding the terraform state for this workspace."
 }
 
+variable "bucket_prefix" {
+  description = "Prefix for the account/foundation-layer S3 buckets (state, SmartStore, apps, KV-backup). Bucket names are \"$${bucket_prefix}-$${environment}-...\" - override to shorten (e.g. \"lh\") or to avoid a collision in shared S3 namespace."
+  type        = string
+  default     = "livehybrid"
+}
+
 variable "default_vpc_cidr" {}
 variable "default_subnet_a_cidr" {}
 variable "default_subnet_b_cidr" {}
@@ -179,6 +185,12 @@ variable "eks_node_groups" {
       availability_zone = "eu-west-2a"
     }
   }
+}
+
+variable "use_spot" {
+  description = "Use EC2 Spot capacity for the EKS managed node groups. Applies to ALL groups uniformly - while only one shared node group exists (dev/livehybrid), enabling this also puts indexer/stateful pods on Spot. Cost saving for dev; not recommended once indexers get their own on-demand node group."
+  type        = bool
+  default     = false
 }
 
 variable "gh_actions_role_arn" {

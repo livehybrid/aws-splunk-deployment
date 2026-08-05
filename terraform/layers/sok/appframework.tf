@@ -12,7 +12,7 @@
 ###############################################################################
 
 data "aws_s3_bucket" "apps" {
-  bucket = "livehybrid-splunk-${var.environment}-splunk-apps-${var.environment}"
+  bucket = "${var.bucket_prefix}-${var.environment}-splunk-apps"
 }
 
 data "aws_iam_policy_document" "operator_apps_trust" {
