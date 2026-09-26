@@ -13,10 +13,12 @@ create_dns             = true
 dns_base_splunk_domain = "splunk.livehybrid.com"
 
 # VPC, single /24 split across 3 AZs.
-default_vpc_cidr      = "192.168.10.0/24"
-default_subnet_a_cidr = "192.168.10.0/26"
-default_subnet_b_cidr = "192.168.10.64/26"
-default_subnet_c_cidr = "192.168.10.128/26"
+default_vpc_cidr = "192.168.10.0/24"
+vpc_subnets = {
+  a = "192.168.10.0/26"
+  b = "192.168.10.64/26"
+  c = "192.168.10.128/26"
+}
 
 # Splunk AMI, paste the ID from `make packer-build-splunk env=prod`.
 # Version + build come from https://raw.githubusercontent.com/livehybrid/downloadSplunk/refs/heads/main/version.list

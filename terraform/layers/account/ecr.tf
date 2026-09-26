@@ -20,8 +20,24 @@
 # see the eks layer's node IAM policy).
 ###############################################################################
 
+data "aws_secretsmanager_secret" "ecr_pullthroughcache_docker_hub" {
+  name = "ecr-pullthroughcache/docker-hub"
+}
+
 resource "aws_ecr_pull_through_cache_rule" "ecr_public" {
   ecr_repository_prefix = "ecr-public"
   upstream_registry_url = "public.ecr.aws"
   # No credential_arn: ECR Public Gallery is unauthenticated for pull-through cache.
+}
+
+resource "aws_ecr_pull_through_cache_rule" "k8s_public" {
+  ecr_repository_prefix = "k8s-public"
+  upstream_registry_url = "registry.k8s.io"
+  # No credential_arn: K8s Public Gallery is unauthenticated for pull-through cache.
+}
+
+resource "aws_ecr_pull_through_cache_rule" "docker_public" {
+  ecr_repository_prefix = "docker-public"
+  upstream_registry_url = "registry-1.docker.io"
+  credential_arn        = data.aws_secretsmanager_secret.ecr_pullthroughcache_docker_hub.arn
 }

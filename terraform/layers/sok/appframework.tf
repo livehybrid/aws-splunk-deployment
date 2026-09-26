@@ -12,7 +12,7 @@
 ###############################################################################
 
 data "aws_s3_bucket" "apps" {
-  bucket = "${var.bucket_prefix}-${var.environment}-splunk-apps"
+  bucket = "${local.bucket_root}-splunk-apps-${local.environment}"
 }
 
 data "aws_iam_policy_document" "operator_apps_trust" {
@@ -22,18 +22,18 @@ data "aws_iam_policy_document" "operator_apps_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.terraform_remote_state.eks.outputs.oidc_provider_arn]
+      identifiers = [local.oidc_provider_arn]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:sub"
+      variable = "${local.oidc_provider}:sub"
       values   = ["system:serviceaccount:${local.namespace}:splunk-operator-controller-manager"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:aud"
+      variable = "${local.oidc_provider}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -60,7 +60,7 @@ data "aws_iam_policy_document" "operator_apps" {
 }
 
 resource "aws_iam_role" "operator_apps" {
-  name               = "splunk-sok-${var.environment}-operator-apps"
+  name               = "splunk-sok-${local.environment}-operator-apps"
   assume_role_policy = data.aws_iam_policy_document.operator_apps_trust.json
 }
 
@@ -80,4 +80,50 @@ locals {
     endpoint    = "https://s3.${var.region}.amazonaws.com"
     region      = var.region
   }
+
+  # The bucket layout, rendered by the app_locations output (outputs.tf) so an
+  # operator can see where to drop a .tgz without reading the CR bodies.
+  #
+  # ⚠ The three fixed prefixes are duplicated from the appSources in crs.tf
+  # (ClusterManager + MonitoringConsole); change one, change the other. The
+  # SH/SHC entries are derived from local.{sh,shc}_map, which is what the CRs
+  # use too, so those cannot drift.
+  #
+  # Keyed by appSource NAME, not by S3 URI: two search heads may legitimately
+  # share a prefix (both set app_location = "sh-apps/"), and a for-expression
+  # keyed on a duplicate URI fails the whole apply.
+  app_sources = merge(
+    {
+      "idx-apps" = {
+        location        = "idx-apps/"
+        scope           = "cluster"
+        installs_to     = "All indexer peers, staged by the CM and shipped in the cluster bundle"
+        custom_resource = "ClusterManager/cm"
+      }
+      "cm-apps" = {
+        location        = "cm-apps/"
+        scope           = "local"
+        installs_to     = "Cluster manager pod only"
+        custom_resource = "ClusterManager/cm"
+      }
+      "mc-apps" = {
+        location        = "mc-apps/"
+        scope           = "local"
+        installs_to     = "Monitoring console pod only"
+        custom_resource = "MonitoringConsole/mc"
+      }
+    },
+    { for k, v in local.sh_map : "sh-${k}-apps" => {
+      location        = v.app_location
+      scope           = "local"
+      installs_to     = "Standalone search head '${k}' only"
+      custom_resource = "Standalone/sh-${k}"
+    } },
+    { for k, v in local.shc_map : "shc-${k}-apps" => {
+      location        = v.app_location
+      scope           = "cluster"
+      installs_to     = "Search head cluster '${k}': staged in etc/shcluster/apps on the deployer, pushed to all ${v.replicas} members"
+      custom_resource = "SearchHeadCluster/shc-${k}"
+    } },
+  )
 }

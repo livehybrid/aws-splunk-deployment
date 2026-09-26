@@ -16,6 +16,44 @@ resource "kubernetes_namespace_v1" "splunk" {
   metadata {
     name = local.namespace
   }
+
+  # On destroy: strip finalizers from any stuck resources so the namespace
+  # doesn't hang waiting for controllers that have already been removed.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOF
+      NS="${self.metadata[0].name}"
+      # Private endpoint? export K8S_PROXY (e.g. socks5://localhost:1080) before
+      # destroying: a destroy-time provisioner cannot read var.k8s_proxy_url.
+      [ -n "$${K8S_PROXY:-}" ] && export HTTPS_PROXY="$K8S_PROXY"
+
+      # Delete PVCs explicitly — EBS detach can block namespace GC otherwise
+      kubectl delete pvc --all -n "$NS" --ignore-not-found --timeout=60s || true
+
+      # Strip finalizers from standard workload resources
+      for resource in pods statefulsets deployments; do
+        kubectl get "$resource" -n "$NS" -o name 2>/dev/null | while read obj; do
+          kubectl patch "$obj" -n "$NS" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+      done
+
+      # Strip finalizers from Ingresses (ALB controller sets ingress.k8s.aws/resources
+      # and won't clear it once the controller is destroyed)
+      kubectl get ingress -n "$NS" -o name 2>/dev/null | while read obj; do
+        kubectl patch "$obj" -n "$NS" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+      done
+
+      # Strip finalizers from TargetGroupBindings (ALB controller CRD; each Ingress
+      # rule creates one, and they block namespace deletion after the controller is gone)
+      kubectl get targetgroupbinding -n "$NS" -o name 2>/dev/null | while read obj; do
+        kubectl patch "$obj" -n "$NS" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+      done
+
+      # Strip the namespace finalizer itself as a last resort
+      kubectl get namespace "$NS" -o name 2>/dev/null && \
+        kubectl patch namespace "$NS" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+    EOF
+  }
 }
 
 # CRDs were REMOVED from the Helm chart in 3.0.0 (Helm's ~1MB object limit) and
@@ -32,6 +70,8 @@ resource "kubernetes_namespace_v1" "splunk" {
 # keyed by its metadata.name so state addresses stay stable. Bump the vendored
 # file and var.sok_operator_chart_version together.
 locals {
+  default_splunk_image = "${local.ecr_registry}/docker-public/${trimprefix(var.sok_splunk_image, "docker.io/")}"
+
   sok_crd_docs = {
     for doc in compact(split("\n---\n", file("${path.module}/files/splunk-operator-crds.yaml"))) :
     yamldecode(doc).metadata.name => doc
@@ -66,14 +106,33 @@ resource "helm_release" "splunk_operator" {
   # boot (nightly recreate / multisite bring-up).
   timeout = 900
 
+  # Without this a failed install leaves the release in `failed` state while
+  # terraform records nothing in state, so the retry dies with "cannot re-use a
+  # name that is still in use" and the only way forward is a manual
+  # `helm delete -n splunk splunk-operator`. atomic uninstalls the failed
+  # install (the CRDs are applied out-of-band above, so they survive) and
+  # cleanup_on_fail removes resources a failed UPGRADE created, making
+  # `terraform apply` retryable on its own.
+  atomic          = true
+  cleanup_on_fail = true
+
   values = [yamlencode({
     image = {
       # RELATED_IMAGE_SPLUNK_ENTERPRISE, the default Splunk image; every CR
       # also pins spec.image explicitly.
-      repository = var.sok_splunk_image
+      repository = local.default_splunk_image
     }
     splunkOperator = {
+      image = {
+        repository = "${local.ecr_registry}/docker-public/splunk/splunk-operator:${var.sok_operator_chart_version}"
+      }
       clusterWideAccess = false
+      # (certs.tf) spec.certs[] is behind the CertManagement feature gate,
+      # added in 3.2.0 and OFF by default. Without it the operator silently
+      # ignores spec.certs[] rather than erroring, so the CRs come up with
+      # Splunk's own self-signed certs and nothing says why. Empty map when the
+      # toggle is off, which is the chart default and no diff.
+      featureGates = var.sok_private_ca_enabled ? { CertManagement = true } : {}
       # Mandatory for Splunk 10.x: containers refuse to start without the
       # Splunk General Terms acceptance flag. Sourced from a variable with no
       # accepting default (dev sets it in tfvars).
@@ -99,5 +158,16 @@ resource "helm_release" "splunk_operator" {
     }
   })]
 
-  depends_on = [kubectl_manifest.sok_crds, aws_iam_role_policy.operator_apps]
+  # alb_controller: nothing here consumes it, but both helm releases would
+  # otherwise be created CONCURRENTLY, and the ALB controller registers
+  # admission webhooks that intercept objects this chart creates. Serialising
+  # on it means the controller's pods are Ready (helm waits) before anything
+  # else is submitted, so a slow controller rollout can never fail this
+  # install. Belt and braces with enableServiceMutatorWebhook=false: that
+  # removes the Service interception, this removes the ordering luck.
+  depends_on = [
+    kubectl_manifest.sok_crds,
+    aws_iam_role_policy.operator_apps,
+    helm_release.alb_controller,
+  ]
 }

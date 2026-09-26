@@ -1,8 +1,9 @@
 ###############################################################################
 # KV-store backup, an in-cluster CronJob backs up the SHC KV store to the
-# persistent kvbackup bucket (account layer) every 6h via IRSA. SHC-only:
-# dev's Standalone KV store is disposable (nightly destroy). Restore is manual /
-# start-workflow via scripts/sok-kvstore-restore.sh.
+# persistent kvbackup bucket (account layer) every 6h via IRSA. Enabled when
+# any SHC exists (length(local.shc_map) > 0); standalone SH KV stores are
+# disposable (nightly destroy). Restore is manual / start-workflow via
+# scripts/sok-kvstore-restore.sh.
 #
 # The CronJob pod (kubectl+aws image) uses its own ServiceAccount:
 #   - RBAC: pods/exec (kubectl exec + cp into the SHC member),
@@ -17,34 +18,34 @@
 ###############################################################################
 
 data "aws_s3_bucket" "kvbackup" {
-  count  = var.enable_shc ? 1 : 0
-  bucket = "${var.bucket_prefix}-${var.environment}-splunk-kvbackup"
+  count  = length(local.shc_map) > 0 ? 1 : 0
+  bucket = "${local.bucket_root}-splunk-kvbackup-${local.environment}"
 }
 
 data "aws_iam_policy_document" "kvbackup_trust" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     effect  = "Allow"
     principals {
       type        = "Federated"
-      identifiers = [data.terraform_remote_state.eks.outputs.oidc_provider_arn]
+      identifiers = [local.oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:sub"
+      variable = "${local.oidc_provider}:sub"
       values   = ["system:serviceaccount:${local.namespace}:splunk-kvbackup"]
     }
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:aud"
+      variable = "${local.oidc_provider}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
 }
 
 data "aws_iam_policy_document" "kvbackup" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   statement {
     sid       = "KvbackupList"
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
@@ -63,20 +64,20 @@ data "aws_iam_policy_document" "kvbackup" {
 }
 
 resource "aws_iam_role" "kvbackup" {
-  count              = var.enable_shc ? 1 : 0
-  name               = "splunk-sok-${var.environment}-kvbackup"
+  count              = length(local.shc_map) > 0 ? 1 : 0
+  name               = "splunk-sok-${local.environment}-kvbackup"
   assume_role_policy = data.aws_iam_policy_document.kvbackup_trust[0].json
 }
 
 resource "aws_iam_role_policy" "kvbackup" {
-  count  = var.enable_shc ? 1 : 0
+  count  = length(local.shc_map) > 0 ? 1 : 0
   name   = "kvbackup"
   role   = aws_iam_role.kvbackup[0].id
   policy = data.aws_iam_policy_document.kvbackup[0].json
 }
 
 resource "kubernetes_service_account_v1" "kvbackup" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   metadata {
     name        = "splunk-kvbackup"
     namespace   = local.namespace
@@ -87,7 +88,7 @@ resource "kubernetes_service_account_v1" "kvbackup" {
 
 # RBAC: exec into the SH pods (kubectl exec and kubectl cp both use pods/exec).
 resource "kubernetes_role_v1" "kvbackup" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   metadata {
     name      = "splunk-kvbackup"
     namespace = local.namespace
@@ -106,7 +107,7 @@ resource "kubernetes_role_v1" "kvbackup" {
 }
 
 resource "kubernetes_role_binding_v1" "kvbackup" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   metadata {
     name      = "splunk-kvbackup"
     namespace = local.namespace
@@ -123,9 +124,10 @@ resource "kubernetes_role_binding_v1" "kvbackup" {
   }
 }
 
+
 # Mount scripts/sok-kvstore-backup.sh so the CronJob and manual runs share it.
 resource "kubernetes_config_map_v1" "kvbackup_script" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   metadata {
     name      = "splunk-kvbackup-script"
     namespace = local.namespace
@@ -137,13 +139,13 @@ resource "kubernetes_config_map_v1" "kvbackup_script" {
 }
 
 resource "kubernetes_cron_job_v1" "kvbackup" {
-  count = var.enable_shc ? 1 : 0
+  count = length(local.shc_map) > 0 ? 1 : 0
   metadata {
     name      = "splunk-kvbackup"
     namespace = local.namespace
   }
   spec {
-    schedule                      = "0 */6 * * *" # every 6h
+    schedule                      = "13 * * * *" # every 6h
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
@@ -162,8 +164,8 @@ resource "kubernetes_cron_job_v1" "kvbackup" {
               # (SEC-6/DEP-8), the tag documents the version, the digest is
               # what runs; a mutated tag can't ride into the 6-hourly job. A
               # first-party replacement (own ECR build) stays open under #38.
-              image   = "alpine/k8s:1.34.1@sha256:ec714df3813b5405292860f8a1c55c5727bf8c33c88992f1e981efad8065547f"
-              command = ["bash", "/scripts/sok-kvstore-backup.sh", var.environment]
+              image   = "${local.ecr_registry}/docker-public/alpine/k8s:1.34.1"
+              command = ["bash", "/scripts/sok-kvstore-backup.sh", local.environment]
               env {
                 name  = "AWS_REGION"
                 value = var.region
@@ -171,6 +173,26 @@ resource "kubernetes_cron_job_v1" "kvbackup" {
               env {
                 name  = "SOK_NS"
                 value = local.namespace
+              }
+              # Pass the bucket the IAM policy above actually grants on. Both
+              # scripts previously hardcoded a stale pre-fork "livehybrid-..."
+              # name, so the upload aimed at a bucket this role has no policy for
+              # — an AccessDenied at the very last step, after the backup had
+              # already run. Sourcing it from the same data source that builds
+              # the policy means the two cannot drift again.
+              env {
+                name  = "KVBACKUP_BUCKET"
+                value = data.aws_s3_bucket.kvbackup[0].bucket
+              }
+              # The bucket policy Denies PutObject unless the request carries
+              # x-amz-server-side-encryption=aws:kms AND the matching key ARN, and
+              # StringNotEquals is TRUE when those keys are absent — so a plain
+              # `aws s3 cp` is refused. The script sends them explicitly; this is
+              # the ARN it must send, and it is the SAME value the IAM policy
+              # above grants kms:GenerateDataKey on.
+              env {
+                name  = "KVBACKUP_KMS_ARN"
+                value = data.aws_kms_alias.smartstore.target_key_arn
               }
               volume_mount {
                 name       = "script"

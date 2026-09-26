@@ -28,9 +28,7 @@ resource "aws_secretsmanager_secret" "hec_token" {
   description = "Persistent HEC token for the SOK global secret (survives the nightly rebuild), OPS-14."
 
   tags = {
-    project     = "splunk"
-    Name        = "splunk-hec-token-${var.environment}"
-    Environment = var.environment
+    Name = "splunk-hec-token-${var.environment}"
   }
 
   # The token every HEC sender relies on, never let a destroy take it.
