@@ -216,6 +216,20 @@ module "eks" {
         http_put_response_hop_limit = 2
       }
 
+      # Root volume: explicit disk_size, else 500 GiB on GPU groups (Ray image +
+      # cached weights), else the AMI default. null leaves the module default.
+      block_device_mappings = coalesce(ng.disk_size, ng.gpu ? 500 : 0) == 0 ? null : {
+        xvda = {
+          device_name = "/dev/xvda"
+          ebs = {
+            volume_size           = coalesce(ng.disk_size, 500)
+            volume_type           = "gp3"
+            encrypted             = true
+            delete_on_termination = true
+          }
+        }
+      }
+
       labels = merge(ng.labels,
         { "splunk-sok/node-group" = name },
         ng.role != "" ? { "splunk-sok/role" = ng.role } : {},

@@ -14,6 +14,53 @@
 # pods or silent 401s an hour into an apply.
 ###############################################################################
 
+# What AWS itself says about the GPU node groups: the GPU model and count per
+# instance type, and whether that type is offered in the group's AZ. Read-only,
+# and only for groups marked gpu = true.
+# Only for types the offerings lookup confirms: DescribeInstanceTypes fails
+# outright on a type the region does not sell, which would pre-empt the
+# readable "not offered" precondition with a raw API error.
+data "aws_ec2_instance_type" "gpu" {
+  for_each      = local.gpu_offered_types
+  instance_type = each.value
+}
+
+data "aws_ec2_instance_type_offerings" "gpu" {
+  for_each      = local.gpu_groups
+  location_type = "availability-zone"
+
+  filter {
+    name   = "instance-type"
+    values = [each.value.instance_type]
+  }
+
+  filter {
+    name   = "location"
+    values = [each.value.availability_zone]
+  }
+}
+
+locals {
+  # Splunk's stated minimum GPU topology for AI tier v1.0 (deployment guide):
+  # 2 nodes x 1 H100, or 2 nodes x 4 L40S. The model set requests 1.67 H100s or
+  # 3.3 L40S, and Gemma alone needs a whole H100 (two L40S), which is why a
+  # single-GPU host cannot run it however it is tuned.
+  ai_min_gpus = { H100 = 2, L40S = 8 }
+
+  gpu_offered_types = toset([
+    for k, o in data.aws_ec2_instance_type_offerings.gpu : local.gpu_groups[k].instance_type if length(o.instance_types) > 0
+  ])
+
+  gpu_total = sum(concat([0], [
+    for ng in values(local.gpu_groups) : ng.desired * one(data.aws_ec2_instance_type.gpu[ng.instance_type].gpus).count
+    if contains(local.gpu_offered_types, ng.instance_type)
+  ]))
+  gpu_models = distinct([
+    for ng in values(local.gpu_groups) : one(data.aws_ec2_instance_type.gpu[ng.instance_type].gpus).name
+    if contains(local.gpu_offered_types, ng.instance_type)
+  ])
+}
+
 resource "terraform_data" "ai_guard" {
   count = local.enabled ? 1 : 0
 
@@ -26,6 +73,21 @@ resource "terraform_data" "ai_guard" {
     precondition {
       condition     = contains([for ng in values(local.gpu_groups) : ng.instance_type], var.ai_gpu_instance_type)
       error_message = "ai_gpu_instance_type (${var.ai_gpu_instance_type}) does not match the instance_type of any gpu = true node group. The AIPlatform sizes its Ray worker groups to this type, so the two must agree."
+    }
+
+    precondition {
+      condition     = alltrue([for k, o in data.aws_ec2_instance_type_offerings.gpu : length(o.instance_types) > 0])
+      error_message = "A gpu = true node group asks for an instance type its availability zone does not offer: ${join(", ", [for k, o in data.aws_ec2_instance_type_offerings.gpu : "${k} (${local.gpu_groups[k].instance_type} in ${local.gpu_groups[k].availability_zone})" if length(o.instance_types) == 0])}. Note g6e (L40S) is not offered in eu-west-2 at all; there, use p5 (H100)."
+    }
+
+    precondition {
+      condition     = alltrue([for n in local.gpu_models : n == var.ai_accelerator_type])
+      error_message = "The GPU node groups carry ${join(", ", local.gpu_models)} but ai_accelerator_type is ${var.ai_accelerator_type}. The accelerator selects which model weights are served, so the two must match (p5 = H100, g6e = L40S)."
+    }
+
+    precondition {
+      condition     = local.gpu_total >= lookup(local.ai_min_gpus, var.ai_accelerator_type, 0)
+      error_message = "The GPU node groups provide ${local.gpu_total} ${var.ai_accelerator_type} GPU(s); Splunk's minimum for the AI tier is ${lookup(local.ai_min_gpus, var.ai_accelerator_type, 0)} (2x p5.4xlarge for H100, 2x g6e.12xlarge for L40S). Below that the Gemma deployment never schedules and the GPUs you are paying for sit idle."
     }
 
     precondition {

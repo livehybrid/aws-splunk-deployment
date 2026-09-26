@@ -76,31 +76,58 @@ Splunk qualified exactly this combination for v1.0; anything else is untested:
 `sok_splunk_image` is not 10.2; it does not block. Kubernetes 1.34 is inside both
 the AI tier range (1.31 to 1.34) and SOK 3.2.0's (1.32 to 1.36).
 
-## Cost
+## Sizing and cost
 
-The GPU node group dominates. Splunk recommends `g6e.12xlarge` (4× L40S), about
-**$7.77/hour** on-demand in Splunk's EKS guide, or roughly $5,600 a month if left
-running. Smaller single-GPU options (`g5.2xlarge`, 1× A10G) exist for evaluation
-but serve a smaller model set. This estate's nightly destroy applies here too.
-Check GPU service quotas for your region before the first apply: they default low.
+**No single-GPU host can run it.** The v1.0 model set requests **1.67 H100s** or
+**3.3 L40S**, and the Gemma deployment alone takes a whole H100 (two L40S). Splunk's
+stated minimum is:
+
+| Accelerator | Minimum | Instance |
+| --- | --- | --- |
+| **H100** (default) | 2 nodes × 1 H100 | 2 × `p5.4xlarge` (16 vCPU, 256 GiB, 500 GiB disk) |
+| L40S | 2 nodes × 4 L40S | 2 × `g6e.12xlarge` |
+
+A plan-time check refuses fewer GPUs than that, a GPU model that does not match
+`ai_accelerator_type`, and an instance type the node group's AZ does not offer.
+
+**In London (eu-west-2), H100 is the only option: `g6e` (L40S) is not offered
+there at all.** Prices checked 2026-09-26:
+
+| Instance | On-demand | Spot (cheapest AZ) |
+| --- | --- | --- |
+| `p5.4xlarge` (1× H100) | $8.944/h | $8.944/h, eu-west-2b only |
+| **2 × `p5.4xlarge` (the minimum)** | **$17.89/h** | **no discount** |
+| `p5.48xlarge` (8× H100) | $71.55/h | $18.44/h (eu-west-2b) |
+
+Spot currently buys nothing on `p5.4xlarge`: its spot price equals on-demand,
+which means capacity is scarce, and spot is offered in one AZ only. Interrupted
+inference also has to reload tens of GB of weights. Keep GPU groups on-demand
+unless the spot price moves.
+
+At $17.89/h the minimum is about **$13,000 a month** running continuously, or about
+**$3,900** on a 10-hour, 22-day pattern. This estate's nightly destroy applies,
+and GPU service quotas default low, so request an increase before the first apply.
+
+For comparison only: L40S is cheap where it exists (Stockholm's `g6e.12xlarge`
+spot was $2.83/h, so about $5.65/h for the minimum), but a node group cannot sit
+in a different region from its cluster.
 
 ## Enabling it
 
 ```hcl
-ai_tier_enabled      = true
-ai_gpu_instance_type = "g6e.12xlarge"
-ai_accelerator_type  = "L40S"
-ai_search_head       = "default"          # a sok_standalone_search_heads key
-ai_ingress_host      = "ai.example.com"   # users' browsers call SAIA directly
+ai_tier_enabled = true
+ai_search_head  = "default"          # a sok_standalone_search_heads key
+ai_ingress_host = "ai.example.com"   # users' browsers call SAIA directly
+# ai_accelerator_type = "H100" and ai_gpu_instance_type = "p5.4xlarge" are the defaults
 
 eks_node_groups = {
   # ...existing groups...
   gpu-a = {
-    instance_type     = "g6e.12xlarge"
-    gpu               = true              # NVIDIA AMI, GPU label and taint
-    desired           = 1
-    min               = 1
-    max               = 1
+    instance_type     = "p5.4xlarge"
+    gpu               = true           # NVIDIA AMI, GPU label + taint, 500 GiB root
+    desired           = 2              # Splunk's minimum: 2 x H100
+    min               = 2
+    max               = 2
     availability_zone = "eu-west-2a"
   }
 }
@@ -115,13 +142,13 @@ or on a Splunk Operator below 3.2.0.
 ### 1. Stage the model weights (once per bucket)
 
 More than 120 GB from Hugging Face; needs 250 GB free disk and 16 GB RAM on the
-machine running it. Gated models (Gemma) need a Hugging Face token from an
-account that has accepted each model's licence.
+machine running it. None of the v1.0 models are gated, so a Hugging Face token
+is optional (it only raises download rate limits).
 
 ```bash
 AI_BUCKET=$(terraform -chdir=terraform/layers/ai output -raw ai_bucket) \
-AWS_REGION=eu-west-2 HF_TOKEN=hf_... \
-./scripts/ai-stage-models.sh l40s
+AWS_REGION=eu-west-2 \
+./scripts/ai-stage-models.sh h100
 ```
 
 The bucket is in the persistent account layer, so this survives every rebuild.

@@ -531,6 +531,11 @@ variable "eks_node_groups" {
     # nvidia.com/gpu.present label and a nvidia.com/gpu:NoSchedule taint so only
     # GPU workloads land there. See terraform/layers/ai.
     gpu = optional(bool, false)
+    # Root volume in GiB. Empty keeps the AMI default (~20 GiB), fine for
+    # Splunk pods, whose data is on PVCs. GPU groups default to 500 GiB, the
+    # size Splunk specifies for an AI tier GPU worker: the Ray GPU image and the
+    # model weights it caches both land on the node disk.
+    disk_size = optional(number)
   }))
   default = {
     general-a = {
@@ -990,16 +995,16 @@ variable "ai_features" {
 }
 
 variable "ai_accelerator_type" {
-  description = "GPU model the inference deployments are built for: \"L40S\" (g6e) or \"H100\" (p5). Selects which model weights are served, so it must match both the GPU node group and the weights staged into the artifacts bucket."
+  description = "GPU the model set is built for: \"H100\" (p5) or \"L40S\" (g6e). Selects which weights are served, so it must match the GPU node group and the weights staged into the bucket. Default H100 because it is the only one of the two London (eu-west-2) offers: g6e is not available there."
   type        = string
-  default     = "L40S"
+  default     = "H100"
   nullable    = false
 }
 
 variable "ai_gpu_instance_type" {
-  description = "Instance type of the GPU node group, passed to the AIPlatform so Ray sizes its worker groups to it. Must match an eks_node_groups entry with gpu = true. Splunk's recommended default is g6e.12xlarge (4x L40S, ~$7.77/h on-demand per Splunk's EKS guide; check your region)."
+  description = "Instance type of the GPU node group(s). Default p5.4xlarge (1x H100 80 GB): the smallest supported host, and Splunk's stated minimum is TWO of them (2x H100). The model set requests 1.67 H100s, and Gemma alone takes a whole GPU, so no single-GPU host can run it. The L40S equivalent is 2x g6e.12xlarge (8x L40S). A plan-time check enforces the minimum."
   type        = string
-  default     = "g6e.12xlarge"
+  default     = "p5.4xlarge"
   nullable    = false
 }
 

@@ -2,7 +2,7 @@
 # Stage Splunk AI tier model weights into the artifacts bucket.
 #
 #   AI_BUCKET=$(terraform -chdir=terraform/layers/ai output -raw ai_bucket) \
-#   AWS_REGION=eu-west-2 HF_TOKEN=hf_... ./scripts/ai-stage-models.sh [l40s|h100]
+#   AWS_REGION=eu-west-2 ./scripts/ai-stage-models.sh [h100|l40s]
 #
 # One-off per bucket: the bucket lives in the persistent account layer, so the
 # weights survive the nightly rebuild and this does not need re-running.
@@ -12,12 +12,12 @@
 # release this deployment pins, so the model set always matches the operator.
 #
 # Needs: git, the AWS CLI with write access to the bucket, >= 250 GB free disk
-# and >= 16 GB RAM (Splunk's stated minimum). Gated Hugging Face models (Gemma)
-# need HF_TOKEN from an account that has accepted each model's licence.
+# and >= 16 GB RAM (Splunk's stated minimum). No v1.0 model is gated; HF_TOKEN is
+# optional and only raises Hugging Face rate limits.
 set -euo pipefail
 
 : "${AI_BUCKET:?set AI_BUCKET (terraform output ai_bucket of the ai layer)}"
-ACCELERATOR="${1:-l40s}"
+ACCELERATOR="${1:-h100}"
 case "$ACCELERATOR" in l40s|h100) ;; *) echo "accelerator must be l40s or h100" >&2; exit 1 ;; esac
 
 OPERATOR_VERSION="${OPERATOR_VERSION:-1.0.0}"
