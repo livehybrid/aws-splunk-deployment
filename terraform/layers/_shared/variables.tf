@@ -501,7 +501,7 @@ variable "eks_vpc_name_tag" {
 }
 
 variable "eks_node_groups" {
-  description = "Managed node groups, keyed by name. Splunk Enterprise images are x86-64 only and Splunk 10 requires AVX, no Graviton. Indexer nodes should be on-demand (no Spot for stateful pods). Set role to pin a group to a Splunk role via a label + NoSchedule taint (e.g. \"indexer\"); empty = general pool. Set nvme_local_storage = true on instance families with NVMe instance-store (e.g. i7i) to assemble drives into a RAID-0 at /mnt/k8s-disks on boot."
+  description = "Managed node groups, keyed by name. Splunk Enterprise images are x86-64 only and Splunk 10 requires AVX, no Graviton. Indexer nodes should be on-demand (no Spot for stateful pods). Set role to pin a group to a Splunk role via a label + NoSchedule taint (e.g. \"indexer\"); empty = general pool. Set nvme_local_storage = true on instance families with NVMe instance-store (e.g. i7i) to assemble drives into a RAID-0 at /mnt/k8s-disks on boot. Set gpu = true on a GPU instance family (g5, g6e, p5) for the AI tier; leave role empty on GPU groups, the GPU taint already reserves them."
   type = map(object({
     instance_type = string
     # Optional fallback pool. A spot request pinned to ONE instance type is
@@ -527,6 +527,10 @@ variable "eks_node_groups" {
     # reclaimed node takes its hot buckets with it, and at RF=1/SF=1 there is
     # no replica to recover from. Changing this REPLACES the node group.
     capacity_type = optional(string, "ON_DEMAND")
+    # GPU group for the AI tier: NVIDIA AMI (driver + container toolkit), a
+    # nvidia.com/gpu.present label and a nvidia.com/gpu:NoSchedule taint so only
+    # GPU workloads land there. See terraform/layers/ai.
+    gpu = optional(bool, false)
   }))
   default = {
     general-a = {
@@ -933,5 +937,110 @@ variable "sok_privateca_issuer_chart_version" {
   description = "aws-privateca-issuer Helm chart version (the cert-manager external issuer that turns a CertificateRequest into an acm-pca:IssueCertificate call)."
   type        = string
   default     = "1.9.2"
+  nullable    = false
+}
+###############################################################################
+# Splunk AI tier. See docs/ai-tier.md and terraform/layers/ai.
+#
+# ai_tier_enabled defaults to false. With it false the account layer creates no
+# artifacts bucket, the sok layer installs nothing extra and the ai layer
+# creates nothing.
+###############################################################################
+
+variable "ai_tier_enabled" {
+  description = "Deploy the Splunk AI tier (Splunk AI Operator + AIPlatform: Ray inference on GPU, Weaviate, the Splunk AI Assistant backend and the SLIM service) onto this cluster, connected to the SOK standalone search head. Needs at least one eks_node_groups entry with gpu = true. Also makes the sok layer install cert-manager, which the AI operator's webhooks require."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "ai_operator_chart_version" {
+  description = "splunk-ai-operator Helm chart version (github.com/splunk/splunk-ai-operator releases). 1.0.0 is the first GA release (2026-08-27)."
+  type        = string
+  default     = "1.0.0"
+  nullable    = false
+}
+
+variable "ai_images" {
+  description = <<-EOT
+    AIPlatform images. The defaults are the combination Splunk qualified for AI
+    tier v1.0 (deployment guide, "Supported release combination"), all public on
+    Docker Hub. The chart's own image defaults are NOT that combination, which is
+    why they are always set explicitly here. Pulled through the ECR pull-through
+    cache when use_ecr_pullthrough_cache is on.
+  EOT
+  type = object({
+    saia_api         = optional(string, "docker.io/splunk/ai-tier-saia-api:v1.0")
+    saia_api_v2      = optional(string, "docker.io/splunk/ai-tier-saia-api-v2:v1.0")
+    saia_data_loader = optional(string, "docker.io/splunk/ai-tier-saia-data-loader:v1.0")
+    slim             = optional(string, "docker.io/splunk/ai-tier-slim-service:v1.0")
+    ray_head         = optional(string, "docker.io/splunk/ai-tier-ray-head:v1.0")
+    ray_worker       = optional(string, "docker.io/splunk/ai-tier-ray-worker:v1.0")
+    weaviate         = optional(string, "docker.io/semitechnologies/weaviate:stable-v1.28-007846a")
+  })
+  default  = {}
+  nullable = false
+}
+
+variable "ai_features" {
+  description = "AIPlatform features to enable. saia = the Splunk AI Assistant backend; slim = the model service the Splunk AI Toolkit calls for `ai` and CDTSM SPL. Both need the matching Splunk app on the search head (see docs/ai-tier.md)."
+  type        = list(string)
+  default     = ["saia", "slim"]
+  nullable    = false
+}
+
+variable "ai_accelerator_type" {
+  description = "GPU model the inference deployments are built for: \"L40S\" (g6e) or \"H100\" (p5). Selects which model weights are served, so it must match both the GPU node group and the weights staged into the artifacts bucket."
+  type        = string
+  default     = "L40S"
+  nullable    = false
+}
+
+variable "ai_gpu_instance_type" {
+  description = "Instance type of the GPU node group, passed to the AIPlatform so Ray sizes its worker groups to it. Must match an eks_node_groups entry with gpu = true. Splunk's recommended default is g6e.12xlarge (4x L40S, ~$7.77/h on-demand per Splunk's EKS guide; check your region)."
+  type        = string
+  default     = "g6e.12xlarge"
+  nullable    = false
+}
+
+variable "ai_search_head" {
+  description = "Key of the sok_standalone_search_heads entry the AI tier connects to (JWT issuer and the Splunk AI Assistant app). AI tier v1.0 is qualified against a standalone search head only; a search head cluster is not a supported target."
+  type        = string
+  default     = "default"
+  nullable    = false
+}
+
+variable "ai_vector_db_storage" {
+  description = "Persistent volume size for the Weaviate vector database."
+  type        = string
+  default     = "100Gi"
+  nullable    = false
+}
+
+variable "ai_ingress_host" {
+  description = "Public hostname for SAIA behind the ALB, e.g. \"ai.example.com\". The browser calls SAIA directly (the search head only issues the JWT), so users need a route to it, and it must be HTTPS whenever Splunk Web is, or the browser blocks it as mixed content. Empty = no ingress: SAIA is reachable in-cluster only, enough for the search head's server-side calls but not for users."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "ai_monitoring_enabled" {
+  description = "Install kube-prometheus-stack (Prometheus only; Grafana and Alertmanager stay off) with the AI operator and turn on the AIPlatform Prometheus sidecars. Leave it on unless the cluster ALREADY runs the Prometheus Operator: the AI operator's AIService controller watches ServiceMonitor and will not start without that CRD, so false is only safe where something else provides it."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "ai_nvidia_device_plugin_chart_version" {
+  description = "NVIDIA k8s-device-plugin Helm chart version (nvidia.github.io/k8s-device-plugin). Advertises nvidia.com/gpu on the gpu = true node groups."
+  type        = string
+  default     = "0.20.1"
+  nullable    = false
+}
+
+variable "ai_object_storage_secret" {
+  description = "Name of a Secret (in the SOK namespace) holding s3_access_key and s3_secret_key for the AI artifacts bucket. Empty (the default) uses IRSA, which is the intended path on EKS. Only set it if Ray workers fail to download weights with an access error, which would mean the downloader does not honour web identity."
+  type        = string
+  default     = ""
   nullable    = false
 }

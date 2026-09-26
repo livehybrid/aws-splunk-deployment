@@ -113,7 +113,10 @@ locals {
 ###############################################################################
 
 resource "helm_release" "cert_manager" {
-  count = local.tls_enabled ? 1 : 0
+  # Also for the AI tier: the Splunk AI Operator's admission webhooks get their
+  # serving certificates from cert-manager (terraform/layers/ai). One install
+  # serves both; the AI operator chart's bundled cert-manager is disabled.
+  count = local.tls_enabled || var.ai_tier_enabled ? 1 : 0
 
   name             = "cert-manager"
   repository       = "https://charts.jetstack.io"
