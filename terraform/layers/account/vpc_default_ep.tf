@@ -42,6 +42,19 @@ data "aws_iam_policy_document" "vpce_s3_policy" {
 
     resources = ["arn:aws:s3:::prod-${var.region}-starport-layer-bucket/*"]
   }
+  # Amazon Linux 2023 package repositories are S3-hosted too (al2023-repos-
+  # <region>-<id>). eks/files/nvme-raid.sh installs mdadm at boot, so without
+  # this every nvme_local_storage node fails to assemble its RAID behind the
+  # gateway endpoint.
+  statement {
+    sid     = "AllowAL2023Repos"
+    actions = ["s3:GetObject"]
+    principals {
+      identifiers = ["*"]
+      type        = "*"
+    }
+    resources = ["arn:aws:s3:::al2023-repos-${var.region}-*/*"]
+  }
 }
 
 resource "aws_vpc_endpoint" "ep_s3" {
