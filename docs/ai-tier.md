@@ -50,6 +50,9 @@ Apply order `account → eks → sok → ai`; destroy `ai` first.
   neither Ray nor the upstream upload scripts send the SSE header.
 - **SAIA shares the Splunk Web ALB** (same ingress group), so no second load
   balancer.
+- **The artifacts bucket is added to the S3 gateway endpoint policy.** That
+  policy only allows listed buckets, and nodes reach S3 through it, so without
+  the entry every weight download from Ray is a 403.
 - **The chart's OpenTelemetry subchart is disabled.** Its bundled
   `values.schema.json` is invalid against the JSON Schema metaschema, and
   Helm 3.19 refuses to install the chart because of it (3.17 accepts it).
