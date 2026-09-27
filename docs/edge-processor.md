@@ -181,9 +181,10 @@ example `HTTPS_PROXY`).
 
 The chart defaults apply per instance: requests 1 vCPU and 2 GiB, limits
 2 vCPU and 4 GiB (`ep_resources`). Three instances therefore ask for 3 vCPU
-and 6 GiB of the general pool, plus a 15 GiB gp3 volume each. On the dev
-shape's two t3.xlarge general nodes, run two instances with smaller requests,
-or give Edge Processor its own node group via `ep_node_selector`.
+and 6 GiB of the general pool, plus a 15 GiB gp3 volume each. On a small
+general pool (the default is two t3.xlarge nodes, shared with Splunk), run two
+instances with smaller requests, or give Edge Processor its own node group and
+point `ep_node_selector` at it.
 
 Autoscaling (`ep_autoscaling_enabled`) is off because the eks layer installs
 no metrics-server, and without one the HPA never acts. With one installed, the
