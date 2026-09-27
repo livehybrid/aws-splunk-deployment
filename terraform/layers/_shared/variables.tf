@@ -754,6 +754,186 @@ variable "sok_web_external_allowed_cidrs" {
   default     = []
 }
 
+###############################################################################
+# Edge Processor layer (terraform/layers/ep). All inert unless ep_enabled.
+# See docs/edge-processor.md.
+###############################################################################
+
+variable "ep_enabled" {
+  description = "Deploy Splunk Edge Processor instances on the SOK cluster (ep layer). The control plane is NOT deployed here: it is a Splunk Cloud tenant or a Splunk Enterprise 10.0+ data management control plane that already exists, and every value below comes from its Install/uninstall screen (Instance type = Kubernetes). False (the default) plans the ep layer empty."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "ep_chart_version" {
+  description = "splunk/edge-processor Helm chart version (https://splunk.github.io/edge-processor-helm-charts). The image tag follows the chart. ⚠ Read the upgrade note in docs/edge-processor.md first: the chart's principal Job is not a Helm hook, and a Job's pod template is immutable."
+  type        = string
+  default     = "1.0.3"
+  nullable    = false
+}
+
+variable "ep_namespace" {
+  description = "Namespace for the Edge Processor releases, created and owned by the ep layer. Destroying the layer deletes it, which also deletes the event-queue PVCs (and any events still queued on them)."
+  type        = string
+  default     = "splunk-edge"
+  nullable    = false
+}
+
+variable "ep_tenant" {
+  description = "TENANT from the control plane's Kubernetes install command. Required when ep_enabled."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "ep_region" {
+  description = "REGION from the control plane's Kubernetes install command. Leave empty if the command does not set it."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "ep_env" {
+  description = "ENV from the control plane's Kubernetes install command. Empty uses the chart's default (\"production\"); only set it if the command sets it."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "ep_processors" {
+  description = <<-EOT
+    Edge Processors to run, keyed by a short name (the release and Service are
+    ep-<key>). Each entry is one Edge Processor from the control plane, i.e. one
+    GROUP_ID; every pod in a release joins that processor as an instance.
+
+      group_id         the processor's ID (Edge Processors page -> the processor)
+      token_secret_id  Secrets Manager secret (name or ARN) holding the TOKEN from
+                       its Kubernetes install command, as a plain string
+      replicas         instances to start with (the HPA floor)
+      max_replicas     HPA ceiling, only used with ep_autoscaling_enabled
+      queue_size_gib   per-instance event-queue PVC
+      hostname         optional DNS name for its NLB: a bare label goes under
+                       ep_dns_zone_name, a dotted name is used as-is
+  EOT
+  type = map(object({
+    group_id        = string
+    token_secret_id = string
+    replicas        = optional(number, 3)
+    max_replicas    = optional(number, 10)
+    queue_size_gib  = optional(number, 15)
+    hostname        = optional(string, "")
+  }))
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = alltrue([for k, p in var.ep_processors : can(regex("^[a-z0-9]([a-z0-9-]{0,20}[a-z0-9])?$", k))])
+    error_message = "ep_processors keys must be lower-case DNS labels of at most 22 characters (they prefix pod, PVC and load balancer names)."
+  }
+
+  validation {
+    condition     = alltrue([for p in var.ep_processors : can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", p.group_id))])
+    error_message = "ep_processors[*].group_id must be the processor's UUID, e.g. 431e1ead-fd5b-4af8-ac89-ccae2ae81eda."
+  }
+
+  validation {
+    condition     = alltrue([for p in var.ep_processors : p.replicas >= 1 && p.max_replicas >= p.replicas && p.queue_size_gib >= 1])
+    error_message = "ep_processors: replicas must be at least 1, max_replicas at least replicas, queue_size_gib at least 1."
+  }
+}
+
+variable "ep_ports" {
+  description = "Receiver ports, which MUST match the control plane's shared settings: a port changed there is not pushed into an existing release. 0 disables a receiver. Syslog is exposed on both TCP and UDP."
+  type = object({
+    forwarder = optional(number, 9997)
+    hec       = optional(number, 8088)
+    syslog    = optional(number, 10514)
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = anytrue([for p in values(var.ep_ports) : p > 0]) && alltrue([for p in values(var.ep_ports) : p >= 0 && p <= 65535])
+    error_message = "ep_ports: at least one receiver must be enabled, and every port must be between 0 and 65535."
+  }
+}
+
+variable "ep_resources" {
+  description = "Per-instance requests and limits. The defaults are the chart's."
+  type = object({
+    cpu_request    = optional(string, "1")
+    memory_request = optional(string, "2Gi")
+    cpu_limit      = optional(string, "2")
+    memory_limit   = optional(string, "4Gi")
+  })
+  default  = {}
+  nullable = false
+}
+
+variable "ep_autoscaling_enabled" {
+  description = "Keep the chart's HPA (scale-up only, CPU 70% / memory 80%). Off by default because the eks layer installs no metrics-server, without which the HPA never acts. Scale-down stays disabled either way: an instance removed with events on its PVC queue loses them."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "ep_node_selector" {
+  description = "nodeSelector for Edge Processor pods, e.g. { \"splunk-sok/node-group\" = \"general-a\" }. Empty schedules them on any untainted node."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
+variable "ep_extra_env" {
+  description = "Extra environment variables for every instance, e.g. HTTPS_PROXY / NO_PROXY when the control plane is only reachable through a proxy."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
+variable "ep_nlb_enabled" {
+  description = "Put each processor behind its own NLB (TCP passthrough, so TLS configured on the receivers in the control plane terminates on the instance). False keeps the receivers in-cluster only, e.g. for forwarders running in the same cluster."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "ep_nlb_internet_facing" {
+  description = "Internet-facing NLB instead of internal. Needs ep_nlb_allowed_cidrs set explicitly."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "ep_nlb_allowed_cidrs" {
+  description = "Source CIDRs allowed through the NLB. Empty allows the VPC CIDR on an internal NLB and is refused on an internet-facing one."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}
+
+variable "ep_nlb_preserve_client_ip" {
+  description = "Preserve the sender's source IP through the NLB, so syslog events carry the real host rather than the NLB's address. UDP always preserves it."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "ep_dns_zone_name" {
+  description = "Route53 public zone for ep_processors[*].hostname records. Empty falls back to sok_web_external_zone_name."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
+variable "ep_egress_cidrs" {
+  description = "With sok_network_policies_enabled, the Edge Processor namespace gets the same egress isolation as the splunk namespace: DNS, :443, Services and the splunk namespace only. List here anything else instances must reach on other ports: a control plane on :8089 in the VPC, or indexers outside the cluster on :9997 / :8088."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}
+
 variable "sok_indexer_nvme_var_storage" {
   description = "When true, indexer var (SmartStore cache) PVCs use the splunk-local-nvme StorageClass backed by instance-store NVMe RAID-0 (/mnt/k8s-disks). Requires nvme_local_storage=true on the indexer node groups and the local-path-provisioner to be deployed. etc PVCs always stay on EBS regardless."
   type        = bool

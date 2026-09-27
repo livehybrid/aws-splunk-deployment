@@ -42,6 +42,7 @@ the HEC-token secret all live in the `account` layer.
 - **[Apps & deployment](apps.md)**, the git→S3→App Framework contract + queued app work
 - **[Security & TLS](security.md)**, SOK security posture, secrets inventory, S2S/8089/SmartStore TLS
 - **[CI / GitHub Actions](ci.md)**, start/stop/checks/deploy/Infracost/docs workflows
+- **[Edge Processor](edge-processor.md)**, the optional ep layer: Edge Processor instances on EKS behind NLBs
 - **[Design study](kubernetes-sok.md)**, the research and rationale behind the SOK path
 - **[Implementation plan](kubernetes-sok-plan.md)**, phase-by-phase build (K1–K5), layer deltas, status
 - **[Community lessons](kubernetes-sok-community-lessons.md)**, Gareth Anderson (SplunkTrust) digest vs this build
