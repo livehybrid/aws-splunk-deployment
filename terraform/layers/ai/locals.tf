@@ -17,10 +17,8 @@ locals {
   ai_bucket_name      = "${var.bucket_prefix}-splunk-${local.environment}-splunk-ai-${local.environment}"
   ai_artifacts_prefix = "artifacts"
 
-  # Images through the account layer's ECR pull-through cache when it is on,
-  # exactly as the sok layer does for Splunk.
+  # Private ECR registry of this account; image routing is in images.tf.
   ecr_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
-  image        = { for k, ref in var.ai_images : k => var.use_ecr_pullthrough_cache ? "${local.ecr_registry}/docker-public/${trimprefix(ref, "docker.io/")}" : ref }
 
   # The SOK standalone search head the AI tier trusts and serves. Mirrors how
   # the sok layer resolves its search heads: with both search-head maps empty

@@ -1049,3 +1049,15 @@ variable "ai_object_storage_secret" {
   default     = ""
   nullable    = false
 }
+
+variable "ai_nvidia_device_plugin_image" {
+  description = "Full image reference (repository:tag) for the NVIDIA device plugin, e.g. \"<account>.dkr.ecr.<region>.amazonaws.com/nvidia/k8s-device-plugin:v0.20.1\". Empty (the default) pulls nvcr.io directly, which needs internet egress. nvcr.io is not a supported ECR pull-through upstream, so a VPC without egress needs a one-off mirror: scripts/mirror-device-plugin.sh."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  validation {
+    condition     = var.ai_nvidia_device_plugin_image == "" || can(regex("^.+:[^:/]+$", var.ai_nvidia_device_plugin_image))
+    error_message = "ai_nvidia_device_plugin_image must be repository:tag."
+  }
+}

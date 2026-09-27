@@ -140,6 +140,38 @@ Plan-time preconditions refuse to apply without a `gpu = true` group, with a GPU
 instance type that doesn't match it, without the named standalone search head,
 or on a Splunk Operator below 3.2.0.
 
+## No internet egress
+
+Supported. **Nothing in the cluster talks to Hugging Face.** Every model in the
+v1.0 configuration, tokenizers included, loads from the artifacts bucket
+(`blob_prefix: model_artifacts/...`) or is built into the Ray image; none is
+referenced by a Hugging Face repository ID. Hugging Face is only used when the
+weights are staged, by a machine outside the VPC. This matches Splunk's own
+air-gap guidance ("only the installer machine needs internet"), though Splunk's
+turnkey air-gap installer is for k0s, not EKS.
+
+What the cluster needs instead:
+
+| Need | How |
+| --- | --- |
+| Model weights | S3 through the gateway endpoint (the artifacts bucket is in its policy) |
+| Images from Docker Hub, Quay, `registry.k8s.io`, ECR Public | ECR pull-through cache, `use_ecr_pullthrough_cache = true`; ECR fetches upstream on AWS's side |
+| The NVIDIA device plugin (`nvcr.io`) | not a pull-through upstream: mirror once with `scripts/mirror-device-plugin.sh`, set `ai_nvidia_device_plugin_image` |
+| Helm charts | fetched by whatever runs Terraform, not by the nodes |
+| GPU driver | already in the EKS NVIDIA AMI, nothing to download |
+
+With the cache on, every image the AI tier runs (the operator, SAIA, SLIM, Ray,
+Weaviate, KubeRay, the Prometheus stack, cert-manager and the PCA issuer) is
+redirected to ECR. That was checked by rendering all four charts with this
+layer's values: 24 images, none referencing an upstream registry, including
+images passed as command-line flags. A plan-time warning fires if the cache is on
+but the device plugin still points at `nvcr.io`.
+
+Docker Hub through ECR needs the `ecr-pullthroughcache/docker-hub` credential
+secret. If the organisation's policies only allow S3 access through VPC
+endpoints, run the staging script from inside the network rather than uploading
+directly.
+
 ## After apply
 
 ### 1. Stage the model weights (once per bucket)

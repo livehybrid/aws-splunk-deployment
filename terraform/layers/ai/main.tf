@@ -231,10 +231,7 @@ resource "helm_release" "nvidia_device_plugin" {
   cleanup_on_fail = true
   timeout         = 600
 
-  values = [yamlencode({
-    nodeSelector = { "nvidia.com/gpu.present" = "true" }
-    tolerations  = [{ operator = "Exists" }]
-  })]
+  values = [yamlencode(local.nvdp_values)]
 }
 
 ###############################################################################
@@ -277,26 +274,8 @@ resource "helm_release" "ai_operator" {
   cleanup_on_fail = true
   timeout         = 900
 
-  values = [yamlencode({
-    "splunk-operator"        = { enabled = false }
-    "cert-manager"           = { enabled = false }
-    "kuberay-operator"       = { enabled = true }
-    "opentelemetry-operator" = { enabled = false }
-    "kube-prometheus-stack"  = { enabled = var.ai_monitoring_enabled }
-
-    image = {
-      repository = var.use_ecr_pullthrough_cache ? "${local.ecr_registry}/docker-public/splunk/splunk-ai-operator" : "docker.io/splunk/splunk-ai-operator"
-      tag        = "v${var.ai_operator_chart_version}"
-    }
-
-    saiaApiImage    = local.image.saia_api
-    saiaApiV2Image  = local.image.saia_api_v2
-    saiaSchemaImage = local.image.saia_data_loader
-    slimApiImage    = local.image.slim
-    rayHeadImage    = local.image.ray_head
-    rayWorkerImage  = local.image.ray_worker
-    weaviateImage   = local.image.weaviate
-  })]
+  # Built in images.tf: every image routed through ECR when the cache is on.
+  values = [yamlencode(local.ai_operator_values)]
 
   depends_on = [terraform_data.ai_guard, helm_release.nvidia_device_plugin]
 }
