@@ -1,3 +1,6 @@
+# Set K8S_PROXY (e.g. socks5://localhost:1080) when the EKS endpoint is private.
+K8S_PROXY_ENV := $(if $(K8S_PROXY),HTTPS_PROXY=$(K8S_PROXY),)
+
 SHELL := /bin/bash
 export AWS_PAGER :=
 .DEFAULT_GOAL := help
@@ -96,6 +99,31 @@ sok-status: guard-env ## SOK CR phases + pods
 	kubectl get clustermanager,indexercluster,searchheadcluster,standalone,licensemanager,monitoringconsole -n splunk 2>/dev/null || echo "(no cluster, run 'make kubeconfig env=$(env)' and ensure the eks/sok layers are applied)"; \
 	echo "=== pods ==="; \
 	kubectl get pods -n splunk -o wide 2>/dev/null
+
+sok-nodes: ## EKS nodes: node group, AZ, instance type + EC2 instance ID (console lookup)
+    
+	@OUT=$$($(K8S_PROXY_ENV) kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.labels.splunk-sok/node-group}{"\t"}{.metadata.labels.topology\.kubernetes\.io/zone}{"\t"}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\t"}{.metadata.name}{"\t"}{.spec.providerID}{"\n"}{end}' 2>/dev/null); \
+	if [ -z "$$OUT" ]; then echo "(no nodes — run 'make kubeconfig env=<env>', or the eks layer is destroyed)"; exit 0; fi; \
+	{ printf 'GROUP\tZONE\tTYPE\tREADY\tNODE\tINSTANCE\n'; echo "$$OUT"; } \
+	  | awk -F'\t' '{ for (i = 1; i <= 6; i++) { v = ($$i == "" ? "-" : $$i); \
+	                    if (i == 6) sub(/^aws:\/\/\/[^\/]*\//, "", v); \
+	                    cell[NR, i] = v; if (length(v) > w[i]) w[i] = length(v) } } \
+	      END { for (r = 1; r <= NR; r++) { s = ""; \
+	              for (i = 1; i <= 6; i++) s = s sprintf("%-" (w[i] + 2) "s", cell[r, i]); \
+	              sub(/ +$$/, "", s); print s } }'
+
+sok-pods: ## pods in namespace splunk (-o wide) annotated with the node group each landed on
+	@{ $(K8S_PROXY_ENV) kubectl get nodes -o jsonpath='{range .items[*]}{"#NODE "}{.metadata.name}{" "}{.metadata.labels.splunk-sok/node-group}{"\n"}{end}' 2>/dev/null; \
+	$(K8S_PROXY_ENV) kubectl get pods -n splunk -o wide 2>/dev/null; } \
+| awk '$$1 == "#NODE" { if ($$2 != "") grp[$$2] = ($$3 == "" ? "-" : $$3); next } \
+		{ n++; line[n] = $$0; if (length($$0) > w) w = length($$0); \
+			if (n == 1) { tail[n] = "NODEGROUP"; next } \
+			tail[n] = "-"; \
+			for (nn in grp) if (index($$0, nn) > 0) { tail[n] = grp[nn]; break } } \
+		END { if (n == 0) { print "(no pods in namespace splunk — if the cluster is unreachable, run: make kubeconfig env=$(env))"; exit } \
+				for (i = 1; i <= n; i++) printf "%-" w "s  %s\n", line[i], tail[i] }'
+
+
 
 kexec: guard-env guard-role ## shell into a Splunk pod (role=cm|indexer|sh|lm|mc)
 	@case "$(role)" in \

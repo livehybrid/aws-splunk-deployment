@@ -1,1 +1,1 @@
-../_shared/variables.tf
+../../layers/_shared/variables.tf

@@ -27,6 +27,34 @@ data "aws_iam_policy_document" "vpce_s3_policy" {
     }
     resources = ["*"]
   }
+
+  # ECR image layer data is served from regional S3 buckets (prod-<region>-
+  # starport-layer-bucket). Without this, pulls via the ECR VPC endpoint get
+  # 403 Forbidden because the gateway endpoint policy denies unlisted buckets.
+  statement {
+    sid     = "AllowECRImageLayerPulls"
+    actions = ["s3:GetObject"]
+
+    principals {
+      identifiers = ["*"]
+      type        = "*"
+    }
+
+    resources = ["arn:aws:s3:::prod-${var.region}-starport-layer-bucket/*"]
+  }
+  # Amazon Linux 2023 package repositories are S3-hosted too (al2023-repos-
+  # <region>-<id>). eks/files/nvme-raid.sh installs mdadm at boot, so without
+  # this every nvme_local_storage node fails to assemble its RAID behind the
+  # gateway endpoint.
+  statement {
+    sid     = "AllowAL2023Repos"
+    actions = ["s3:GetObject"]
+    principals {
+      identifiers = ["*"]
+      type        = "*"
+    }
+    resources = ["arn:aws:s3:::al2023-repos-${var.region}-*/*"]
+  }
 }
 
 resource "aws_vpc_endpoint" "ep_s3" {
@@ -50,9 +78,7 @@ resource "aws_security_group" "ep_kms" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "kms-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "kms-vpc-endpoints-sg"
   }
 
   ingress {
@@ -67,7 +93,7 @@ resource "aws_security_group" "ep_kms" {
 }
 
 resource "aws_vpc_endpoint" "ep_kms" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "kms") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.kms"
   vpc_endpoint_type = "Interface"
@@ -91,9 +117,7 @@ resource "aws_security_group" "ep_ec2" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "ec2-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "ec2-vpc-endpoints-sg"
   }
 
   ingress {
@@ -108,7 +132,7 @@ resource "aws_security_group" "ep_ec2" {
 }
 
 resource "aws_vpc_endpoint" "ep_ec2" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "ec2") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.ec2"
   vpc_endpoint_type = "Interface"
@@ -132,9 +156,7 @@ resource "aws_security_group" "ep_elb" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "elb-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "elb-vpc-endpoints-sg"
   }
 
   ingress {
@@ -149,7 +171,7 @@ resource "aws_security_group" "ep_elb" {
 }
 
 resource "aws_vpc_endpoint" "ep_elb" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "elb") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.elasticloadbalancing"
   vpc_endpoint_type = "Interface"
@@ -173,9 +195,7 @@ resource "aws_security_group" "ep_ssm" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "ssm-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "ssm-vpc-endpoints-sg"
   }
 
   ingress {
@@ -190,7 +210,7 @@ resource "aws_security_group" "ep_ssm" {
 }
 
 resource "aws_vpc_endpoint" "ep_ssm" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "ssm") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.ssm"
   vpc_endpoint_type = "Interface"
@@ -207,6 +227,24 @@ resource "aws_vpc_endpoint" "ep_ssm" {
   }
 }
 
+resource "aws_vpc_endpoint" "ep_ssmmessages" {
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "ssm") ? 1 : 0
+  vpc_id            = aws_vpc.default.id
+  service_name      = "com.amazonaws.${var.region}.ssmmessages"
+  vpc_endpoint_type = "Interface"
+
+  subnet_ids = local.net_lists["default"]
+
+  security_group_ids = [
+    aws_security_group.ep_ssm.id,
+  ]
+
+  private_dns_enabled = true
+  tags = {
+    Name = "SSMMessages"
+  }
+}
+
 resource "aws_security_group" "ep_logs" {
   name        = "logs-vpc-endpoints-sg"
   description = "logs-vpc-endpoints-sg"
@@ -214,9 +252,7 @@ resource "aws_security_group" "ep_logs" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "logs-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "logs-vpc-endpoints-sg"
   }
 
   ingress {
@@ -231,7 +267,7 @@ resource "aws_security_group" "ep_logs" {
 }
 
 resource "aws_vpc_endpoint" "ep_logs" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "logs") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.logs"
   vpc_endpoint_type = "Interface"
@@ -255,9 +291,7 @@ resource "aws_security_group" "ep_events" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "events-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "events-vpc-endpoints-sg"
   }
 
   ingress {
@@ -272,7 +306,7 @@ resource "aws_security_group" "ep_events" {
 }
 
 resource "aws_vpc_endpoint" "ep_events" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "events") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.events"
   vpc_endpoint_type = "Interface"
@@ -296,9 +330,7 @@ resource "aws_security_group" "ep_monitoring" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "monitoring-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "monitoring-vpc-endpoints-sg"
   }
 
   ingress {
@@ -313,7 +345,7 @@ resource "aws_security_group" "ep_monitoring" {
 }
 
 resource "aws_vpc_endpoint" "ep_monitoring" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "monitoring") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.monitoring"
   vpc_endpoint_type = "Interface"
@@ -337,9 +369,7 @@ resource "aws_security_group" "sns" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "sns-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "sns-vpc-endpoints-sg"
   }
 
   ingress {
@@ -354,7 +384,7 @@ resource "aws_security_group" "sns" {
 }
 
 resource "aws_vpc_endpoint" "sns" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "sns") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.sns"
   vpc_endpoint_type = "Interface"
@@ -378,9 +408,7 @@ resource "aws_security_group" "sqs" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "sqs-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "sqs-vpc-endpoints-sg"
   }
 
   ingress {
@@ -410,9 +438,7 @@ resource "aws_security_group" "ecr" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "ecr-vpc-endpoints-sg"
-    source  = "terraform"
-    project = "splunk"
+    Name = "ecr-vpc-endpoints-sg"
   }
 
   ingress {
@@ -427,7 +453,7 @@ resource "aws_security_group" "ecr" {
 }
 
 resource "aws_vpc_endpoint" "sqs" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "sqs") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.sqs"
   vpc_endpoint_type = "Interface"
@@ -445,7 +471,7 @@ resource "aws_vpc_endpoint" "sqs" {
 }
 
 resource "aws_vpc_endpoint" "ecr" {
-  count             = var.enable_vpc_endpoints ? 1 : 0
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "ecr") ? 1 : 0
   vpc_id            = aws_vpc.default.id
   service_name      = "com.amazonaws.${var.region}.ecr.dkr"
   vpc_endpoint_type = "Interface"
@@ -462,41 +488,61 @@ resource "aws_vpc_endpoint" "ecr" {
   }
 }
 
-//resource "aws_security_group" "sts" {
-//  name        = "sts-vpc-endpoints-sg"
-//  description = "sts-vpc-endpoints-sg"
-//
-//  vpc_id = "${aws_vpc.default.id}"
-//
-//  tags {
-//    Name    = "sts-vpc-endpoints-sg"
-//    source  = "terraform"
-//    project = "splunk"
-//  }
-//
-//  ingress {
-//    protocol  = "tcp"
-//    from_port = 443
-//    to_port   = 443
-//
-//    cidr_blocks = [
-//      "${var.default_vpc_cidr}",
-//    ]
-//  }
-//}
-//
-//resource "aws_vpc_endpoint" "sts" {
-//  vpc_id            = "${aws_vpc.default.id}"
-//  service_name      = "com.amazonaws.${var.region}.sts"
-//  vpc_endpoint_type = "Interface"
-//
-//  subnet_ids = [
-//    "${local.net_lists["default"]}"
-//  ]
-//
-//  security_group_ids = [
-//    "${aws_security_group.sts.id}",
-//  ]
-//
-//  private_dns_enabled = true
-//}
+resource "aws_vpc_endpoint" "ecrapi" {
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "ecr") ? 1 : 0
+  vpc_id            = aws_vpc.default.id
+  service_name      = "com.amazonaws.${var.region}.ecr.api"
+  vpc_endpoint_type = "Interface"
+
+  subnet_ids = local.net_lists["default"]
+
+  security_group_ids = [
+    aws_security_group.ecr.id,
+  ]
+
+  private_dns_enabled = true
+  tags = {
+    Name = "ECRAPI"
+  }
+}
+
+
+resource "aws_security_group" "sts" {
+  name        = "sts-vpc-endpoints-sg"
+  description = "sts-vpc-endpoints-sg"
+
+  vpc_id = aws_vpc.default.id
+
+  tags = {
+    Name = "sts-vpc-endpoints-sg"
+  }
+
+  ingress {
+    protocol  = "tcp"
+    from_port = 443
+    to_port   = 443
+
+    cidr_blocks = [
+      var.default_vpc_cidr,
+    ]
+  }
+}
+
+
+resource "aws_vpc_endpoint" "sts" {
+  count             = var.enable_vpc_endpoints && contains(var.vpc_endpoint_services, "sts") ? 1 : 0
+  vpc_id            = aws_vpc.default.id
+  service_name      = "com.amazonaws.${var.region}.sts"
+  vpc_endpoint_type = "Interface"
+
+  subnet_ids = local.net_lists["default"]
+
+  security_group_ids = [
+    aws_security_group.sts.id,
+  ]
+
+  private_dns_enabled = true
+  tags = {
+    Name = "STS"
+  }
+}

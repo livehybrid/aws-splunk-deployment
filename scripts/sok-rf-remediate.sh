@@ -15,7 +15,7 @@
 # (auth as `admin`, password read in-pod, never on the command line).
 set -euo pipefail
 export AWS_PAGER=""
-
+[ -n "${K8S_PROXY:-}" ] && export HTTPS_PROXY="$K8S_PROXY"   # private endpoint only
 ENV="${1:?usage: sok-rf-remediate.sh <env>}"
 NS="${SOK_NS:-splunk}"
 

@@ -1,21 +1,26 @@
+variable "bucket_name" {}
+
 variable "encrypted_bucket" {
-  default = true
-}
-
-variable "ssl_access" {
-  default = true
-}
-
-variable "prevent_public_access" {
+  type    = bool
   default = true
 }
 
 variable "encryption_type" {
-  default = "aws:kms" #or AES256
+  type    = string
+  default = "aws:kms"
+}
+
+variable "prevent_public_access" {
+  type    = bool
+  default = true
 }
 
 variable "required_kms_arn" {
+  type    = string
   default = ""
 }
 
-variable "bucket_name" {}
+variable "ssl_access" {
+  type    = bool
+  default = true
+}

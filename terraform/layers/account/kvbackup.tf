@@ -13,7 +13,7 @@
 ###############################################################################
 
 locals {
-  kvbackup_bucket_name = "${local.account_name}-splunk-kvbackup-${var.environment}"
+  kvbackup_bucket_name = "${local.account_name}-splunk-kvbackup-${local.environment}"
 }
 
 module "s3_policy_kvbackup" {
@@ -28,9 +28,7 @@ resource "aws_s3_bucket" "kvbackup" {
   bucket = local.kvbackup_bucket_name
 
   tags = {
-    project     = "splunk"
-    Name        = local.kvbackup_bucket_name
-    Environment = var.environment
+    Name = local.kvbackup_bucket_name
   }
 
   # The only durability layer for the SHC KV store, never let a destroy take it.

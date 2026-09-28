@@ -14,7 +14,7 @@
 ###############################################################################
 
 locals {
-  apps_bucket_name = "${local.account_name}-splunk-apps-${var.environment}"
+  apps_bucket_name = "${local.account_name}-splunk-apps-${local.environment}"
 }
 
 module "s3_policy_apps" {
@@ -29,9 +29,7 @@ resource "aws_s3_bucket" "apps" {
   bucket = local.apps_bucket_name
 
   tags = {
-    project     = "splunk"
-    Name        = local.apps_bucket_name
-    Environment = var.environment
+    Name = local.apps_bucket_name
   }
 
   # The App-Framework source of truth for every SOK tier, never let a destroy

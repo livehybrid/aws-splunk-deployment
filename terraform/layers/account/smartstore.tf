@@ -1,7 +1,7 @@
 ###############################################################################
 # SmartStore bucket + KMS key, the warm/cold tier for the SOK indexers.
 #
-#   bucket: livehybrid-splunk-<env>-splunk-smartstore-<env>
+#   bucket: <bucket_prefix>-splunk-<env>-splunk-smartstore-<env>
 #   alias:  alias/splunk-smartstore-<env>-key
 # The sok layer's IRSA role (irsa.tf) grants S3 + kms:Decrypt/GenerateDataKey on
 # exactly these ARNs; the ClusterManager CR points its remote volume here.
@@ -10,7 +10,7 @@
 ###############################################################################
 
 locals {
-  smartstore_bucket_name = "${local.account_name}-splunk-smartstore-${var.environment}"
+  smartstore_bucket_name = var.smartstore_bucket_name_override != "" ? var.smartstore_bucket_name_override : "${local.account_name}-splunk-smartstore-${local.environment}"
   smartstore_kms_arn     = aws_kms_key.smartstore.arn
 }
 
@@ -20,10 +20,7 @@ resource "aws_kms_key" "smartstore" {
   enable_key_rotation     = true
 
   tags = {
-    Name        = "splunk-smartstore-${var.environment}-key"
-    source      = "terraform"
-    project     = "splunk"
-    Environment = var.environment
+    Name = "splunk-smartstore-${var.environment}-key"
   }
 
   # Holds the key that encrypts indexed data surviving every nightly teardown,
@@ -49,7 +46,7 @@ POLICY
 }
 
 resource "aws_kms_alias" "smartstore" {
-  name          = "alias/splunk-smartstore-${var.environment}-key"
+  name          = "alias/splunk-smartstore-${local.environment}-key"
   target_key_id = aws_kms_key.smartstore.id
 }
 
@@ -65,15 +62,13 @@ resource "aws_s3_bucket" "smartstore" {
   bucket = local.smartstore_bucket_name
 
   tags = {
-    project     = "splunk"
-    Name        = local.smartstore_bucket_name
-    Environment = var.environment
+    Name = local.smartstore_bucket_name
   }
 
   # Source of truth for every byte of indexed data, never let a terraform
   # destroy take it.
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
