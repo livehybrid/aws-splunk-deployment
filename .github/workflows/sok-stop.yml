@@ -7,7 +7,8 @@
 # Order matters:
 #   1. best-effort hot-bucket roll (dev data is disposable, see plan §5; the
 #      full per-index roll+drain is a prod/K7 requirement, supervised first).
-#   2. destroy sok, CRs, operator, and the namespace (whose deletion cascades
+#   2. destroy ep if it was applied (its NLBs need the sok layer's controller
+#      to delete them), then sok, CRs, operator, and the namespace (whose deletion cascades
 #      the PVCs) go while the eks CSI driver still exists, so reclaimPolicy
 #      Delete actually deletes the EBS volumes.
 #   3. wait until no cluster-tagged EBS volumes remain (async CSI reclaim),
@@ -160,6 +161,19 @@ jobs:
               '/opt/splunk/bin/splunk offline --enforce-counts=false -auth "admin:$(cat /mnt/splunk-secrets/password)"' \
               >/dev/null 2>&1 || echo "::warning ::offline failed/timed out on $p (continuing)"
           done
+
+      - name: Destroy ep (before sok, which removes the controller that owns its NLBs)
+        working-directory: terraform/layers/ep
+        run: |
+          # The Edge Processor NLBs are made by the AWS Load Balancer Controller
+          # from Services in the ep layer, and only that controller can delete
+          # them. Destroying sok first would take the controller away and leave
+          # the NLBs billing, so ep goes first. Most workspaces never apply ep:
+          # an empty state is skipped rather than planned.
+          terraform init -input=false -backend-config=conf/$TARGET_ENV.backend.conf
+          terraform workspace select -or-create $TARGET_ENV
+          if [ -z "$(terraform state list 2>/dev/null)" ]; then echo "ep layer not applied, nothing to destroy"; exit 0; fi
+          terraform destroy -input=false -auto-approve -lock-timeout=5m -var-file=vars/$TARGET_ENV.tfvars
 
       - name: Destroy sok (CRs, operator, namespace -> PVCs)
         working-directory: terraform/layers/sok

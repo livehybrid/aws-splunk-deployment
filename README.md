@@ -61,6 +61,8 @@ foundation: VPC, endpoints, KMS, the SmartStore / apps / KV-backup buckets and t
 HEC secret), **iam** (the GitHub Actions OIDC CI role), **eks** (the cluster, nodes,
 storage) and **sok** (the operator, CRDs and the Splunk Custom Resources). Each
 layer's inputs/outputs are documented in its own README via `make terraform-docs`.
+An optional fifth layer, **ep**, runs Splunk Edge Processor instances on the
+cluster against an existing control plane ([docs](docs/edge-processor.md)).
 
 **Overview**
 
@@ -76,6 +78,7 @@ layer's inputs/outputs are documented in its own README via `make terraform-docs
 - [Apps & deployment](docs/apps.md), the git to S3 to App Framework pipeline
 - [Security & TLS](docs/security.md), SmartStore TLS, the SOK secrets, and the cert-management options (including AWS Private CA)
 - [CI / GitHub Actions](docs/ci.md), the SOK start/stop/checks/deploy/docs workflows
+- [Edge Processor](docs/edge-processor.md), the optional ep layer: Edge Processor instances on EKS behind NLBs
 
 **Kubernetes (SOK)**
 

@@ -52,6 +52,7 @@ nav:
     - Apps & deployment: apps.md
     - Security & TLS: security.md
     - CI / GitHub Actions: ci.md
+    - Edge Processor: edge-processor.md
   - Kubernetes (SOK):
     - Overview: kubernetes-sok-overview.md
     - Operations runbook: kubernetes-sok-runbook.md
