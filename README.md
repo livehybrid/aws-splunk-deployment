@@ -48,6 +48,7 @@ All off by default unless noted, each a variable in `terraform/layers/_shared/va
 | Private subnets with egress provided elsewhere (NAT, transit gateway, proxy) | `map_public_ip_on_launch`, `enable_internet_gateway` (both default `true`) |
 | Private EKS endpoint reached through a tunnel | `k8s_proxy_url` (and `K8S_PROXY` for scripts) |
 | Organisation tagging policy, forwarded to instances and volumes | `extra_default_tags` |
+| Splunk AI tier (AI Assistant and AI Toolkit on self-hosted GPU models), see [docs/ai-tier.md](docs/ai-tier.md) | `ai_tier_enabled` + a `gpu = true` node group |
 | Load generation with [Stoker](https://github.com/livehybrid/stoker) and search load with [Regulator](https://github.com/livehybrid/regulator) | `sok_enable_stoker`, `sok_enable_regulator` |
 
 ## 📚 Documentation

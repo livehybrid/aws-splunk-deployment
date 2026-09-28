@@ -125,8 +125,12 @@ module "eks" {
 
   eks_managed_node_groups = {
     for name, ng in var.eks_node_groups : name => {
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = [ng.instance_type]
+      # NVIDIA AMI for GPU groups: ships the driver and container toolkit, so no
+      # GPU operator is needed, only the device plugin (ai layer).
+      ami_type = ng.gpu ? "AL2023_x86_64_NVIDIA" : "AL2023_x86_64_STANDARD"
+      # Optional fallback pool: a group pinned to one type is pinned to one
+      # capacity pool, and never launches when that pool is empty.
+      instance_types = length(ng.instance_types) > 0 ? ng.instance_types : [ng.instance_type]
       # Per group (default ON_DEMAND). Keep stateful indexers on-demand; Spot suits
       # a throwaway dev pool. Replaces the old global use_spot toggle.
       capacity_type = ng.capacity_type
@@ -212,18 +216,44 @@ module "eks" {
         http_put_response_hop_limit = 2
       }
 
+      # Root volume: explicit disk_size, else 500 GiB on GPU groups (Ray image +
+      # cached weights), else the AMI default. null leaves the module default.
+      block_device_mappings = coalesce(ng.disk_size, ng.gpu ? 500 : 0) == 0 ? null : {
+        xvda = {
+          device_name = "/dev/xvda"
+          ebs = {
+            volume_size           = coalesce(ng.disk_size, 500)
+            volume_type           = "gp3"
+            encrypted             = true
+            delete_on_termination = true
+          }
+        }
+      }
+
       labels = merge(ng.labels,
         { "splunk-sok/node-group" = name },
-        ng.role != "" ? { "splunk-sok/role" = ng.role } : {}
+        ng.role != "" ? { "splunk-sok/role" = ng.role } : {},
+        ng.gpu ? { "nvidia.com/gpu.present" = "true" } : {}
       )
 
-      taints = ng.role != "" ? {
-        "splunk-sok/role" = {
-          key    = "splunk-sok/role"
-          value  = ng.role
-          effect = "NO_SCHEDULE"
-        }
-      } : {}
+      taints = merge(
+        ng.role != "" ? {
+          "splunk-sok/role" = {
+            key    = "splunk-sok/role"
+            value  = ng.role
+            effect = "NO_SCHEDULE"
+          }
+        } : {},
+        # Keep Splunk and everything else off expensive GPU nodes. Ray GPU
+        # workers and the device plugin tolerate it.
+        ng.gpu ? {
+          "nvidia.com/gpu" = {
+            key    = "nvidia.com/gpu"
+            value  = "true"
+            effect = "NO_SCHEDULE"
+          }
+        } : {},
+      )
     }
   }
 
