@@ -18,30 +18,101 @@ export AWS_PAGER=""
 ENV="${1:?usage: sok-kvstore-restore.sh <env> [archive-basename]}"
 NS="${SOK_NS:-splunk}"
 REGION="${AWS_REGION:-eu-west-2}"
-BUCKET="livehybrid-splunk-${ENV}-splunk-kvbackup-${ENV}"
+# ---------------------------------------------------------------------------- #
+# Bucket. NOT derived from a hardcoded prefix any more: the account layer names
+# it "${local.account_name}-splunk-kvbackup-<env>" and sok/kvbackup.tf grants IAM
+# on exactly that, but both scripts had a stale pre-fork "livehybrid-..." literal,
+# so the upload targeted a bucket the role has no policy for (and which may not
+# exist). Terraform passes the real name in as KVBACKUP_BUCKET; the CLI fallback
+# keeps `make` usable. Wrong here = AccessDenied at the very last step, after the
+# backup has already run.
+# ---------------------------------------------------------------------------- #
+BUCKET="${KVBACKUP_BUCKET:-}"
+if [ -z "$BUCKET" ]; then
+  echo "== KVBACKUP_BUCKET unset, discovering the kvbackup bucket in ${REGION}" >&2
+  BUCKET=$(aws s3api list-buckets --region "$REGION" \
+             --query "Buckets[?contains(Name, 'splunk-kvbackup-${ENV}')].Name | [0]" \
+             --output text 2>/dev/null || true)
+  [ "$BUCKET" = "None" ] && BUCKET=""
+fi
+[ -n "$BUCKET" ] || { echo "FATAL: no kvbackup bucket. Set KVBACKUP_BUCKET (Terraform passes it on the CronJob)." >&2; exit 1; }
+echo "== bucket: s3://${BUCKET}"
 
-# The member whose kvstore-status reports "KV store captain", restore targets
-# it (Splunk replicates the restored collections to the other SHC members).
+# ---------------------------------------------------------------------------- #
+# Find the KV store captain.
+#
+# ⚠ WAS BROKEN AND SILENT. The old discovery grepped pod names for
+# 'splunk-shc-search-head-[0-9]+', which only matches a SearchHeadCluster CR
+# literally named "shc". Since the multi-SHC refactor the CRs are shc-<key>, so
+# the pods are splunk-shc-<key>-search-head-N and NOTHING matched. Worse, the
+# result fed `POD="${KVSTORE_POD:-$(find_kvstore_captain)}"`, and under `set -e`
+# an assignment inherits its command substitution's exit status — so the script
+# died ON THAT LINE, before the "could not find the captain" echo below it could
+# ever run. A failing CronJob with completely empty logs.
+#
+# Now: select by the operator's own label, which is shape-independent, and never
+# let a discovery failure exit without saying why.
+# ---------------------------------------------------------------------------- #
+list_sh_pods() {
+  if [ -n "${KVSTORE_SHC:-}" ]; then
+    kubectl get pods -n "$NS" \
+      -l "app.kubernetes.io/instance=splunk-shc-${KVSTORE_SHC}-search-head" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+  else
+    kubectl get pods -n "$NS" \
+      -l "app.kubernetes.io/name=search-head" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+  fi
+}
+
 find_kvstore_captain() {
   local p role
-  for p in $(kubectl get pods -n "$NS" -o name 2>/dev/null \
-               | grep -oE 'splunk-shc-search-head-[0-9]+' | sort -u); do
-    # `splunk show kvstore-status` lists EVERY member's replicationStatus (the
-    # "KV store members:" section), and the captain always appears there, so
-    # match only the FIRST line, which is the "This member:" section (i.e. THIS
-    # pod's own role). head -1 is what distinguishes the captain from a member.
+  for p in $(list_sh_pods); do
+    echo "   probing $p" >&2
     role=$(kubectl exec -n "$NS" "$p" -c splunk -- bash -c \
              '/opt/splunk/bin/splunk show kvstore-status -auth admin:$(cat /mnt/splunk-secrets/password) 2>/dev/null | grep -i replicationStatus | head -1' 2>/dev/null || true)
     case "$role" in *"KV store captain"*) echo "$p"; return 0 ;; esac
   done
   return 1
 }
-POD="${KVSTORE_POD:-$(find_kvstore_captain)}"
-[ -n "$POD" ] || { echo "could not find the KV store captain in $NS (set KVSTORE_POD)" >&2; exit 1; }
+
+if [ -n "${KVSTORE_POD:-}" ]; then
+  POD="$KVSTORE_POD"
+  echo "== using KVSTORE_POD override: $POD"
+else
+  echo "== searching for the KV store captain in ns=${NS}${KVSTORE_SHC:+ (shc=${KVSTORE_SHC})}"
+  SH_PODS=$(list_sh_pods || true)
+  if [ -z "$SH_PODS" ]; then
+    echo "FATAL: no search-head pods matched in ns=${NS}." >&2
+    echo "       Pods present:" >&2
+    kubectl get pods -n "$NS" --no-headers -o custom-columns=NAME:.metadata.name >&2 2>/dev/null || true
+    echo "       Set KVSTORE_SHC=<shc-key> or KVSTORE_POD=<pod> to target explicitly." >&2
+    exit 1
+  fi
+  echo "== candidates:"; echo "$SH_PODS" | sed 's/^/   /'
+  # set +e so a non-zero return CANNOT kill the script before the message below.
+  set +e
+  POD="$(find_kvstore_captain)"
+  set -e
+fi
+[ -n "$POD" ] || {
+  echo "FATAL: none of the search-head pods reported 'KV store captain'." >&2
+  echo "       Check: kubectl exec -n ${NS} <pod> -- /opt/splunk/bin/splunk show kvstore-status" >&2
+  echo "       Then force one with KVSTORE_POD=<pod>." >&2
+  exit 1
+}
+echo "== KV store captain: $POD"
 
 ARCHIVE="${2:-}"
 if [ -z "$ARCHIVE" ]; then
-  ARCHIVE=$(aws s3 ls "s3://${BUCKET}/" --region "$REGION" 2>/dev/null | awk '{print $4}' | grep '^kvstore-' | sort | tail -1)
+  # Archives are kvstore-<ISO-ts>-<pod>. The timestamp is field 2 and fixed
+  # width, so a lexical sort is chronological. With more than one SHC in the
+  # bucket, KVSTORE_SHC narrows to that cluster's own backups — without it you
+  # would restore whichever SHC happened to run last.
+  ARCHIVE=$(aws s3 ls "s3://${BUCKET}/" --region "$REGION" 2>/dev/null \
+              | awk '{print $4}' | grep '^kvstore-' \
+              | { [ -n "${KVSTORE_SHC:-}" ] && grep -- "-shc-${KVSTORE_SHC}-" || cat; } \
+              | sort | tail -1)
   [ -n "$ARCHIVE" ] || { echo "no kvstore-* backups in s3://${BUCKET}/" >&2; exit 1; }
 fi
 echo "== restoring $ARCHIVE onto $POD"

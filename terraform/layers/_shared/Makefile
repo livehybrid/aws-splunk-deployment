@@ -18,9 +18,9 @@ terraform-init: guard-env
 	if terraform workspace list | grep -q $(env); then terraform workspace select $(env); else terraform workspace new $(env); fi
 
 terraform: guard-env
-	rm -f .terraform/terraform.tfstate
+	#rm -f .terraform/terraform.tfstate
 	terraform init -var-file=vars/$(env).tfvars -backend-config=conf/$(env).backend.conf
-	if terraform workspace list | grep -q $(env); then terraform workspace select $(env); else terraform workspace new $(env); fi
+#	if terraform workspace list | grep -q $(env); then terraform workspace select $(env); else terraform workspace new $(env); fi
 	@ if [ "$(tf-command)" != "output" ]; then \
 		terraform $(tf-command) -var-file=vars/$(env).tfvars $(args); \
 	else \

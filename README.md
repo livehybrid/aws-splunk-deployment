@@ -27,9 +27,28 @@ the App Framework apps bucket, KV-store backups and the HEC token) lives in a
 foundation layer that is never torn down, so a rebuild comes back with its data
 intact.
 
-TLS note: SmartStore to S3/KMS is fully verified against the OS trust bundle;
-cluster-internal S2S (9997) and splunkd (8089) verification are a documented
-follow-on (see Security & TLS, including the AWS Private CA option).
+TLS: SmartStore to S3/KMS is verified against the OS trust bundle. By default
+splunkd (8089) uses self-signed certificates and S2S (9997) is plaintext; set
+`sok_private_ca_enabled` to issue both from an existing AWS Private CA through
+the operator's native certificate management
+([TLS from AWS Private CA](docs/private-ca-tls.md)).
+
+### Optional features
+
+All off by default unless noted, each a variable in `terraform/layers/_shared/variables.tf`:
+
+| Feature | Variable(s) |
+| --- | --- |
+| Multisite indexer clustering, one IndexerCluster per site pinned to its AZ (see `vars/overlays/dev-multisite.tfvars`) | `multisite`, `available_sites` |
+| Dedicated, tainted node groups per Splunk role | `eks_node_groups[*].role`, `sok_indexer_node_role` |
+| NVMe instance-store RAID-0 for the indexer SmartStore cache | `eks_node_groups[*].nvme_local_storage`, `sok_indexer_nvme_var_storage` |
+| Per-role PVC sizing and Guaranteed-QoS pod resources | `sok_*_storage_by_role`, `sok_pod_resources` |
+| Splunk Web and HEC behind an ALB | `sok_web_external_enabled`, `sok_hec_external_enabled` |
+| TLS from AWS Private CA (8089 and S2S) | `sok_private_ca_enabled` |
+| Private subnets with egress provided elsewhere (NAT, transit gateway, proxy) | `map_public_ip_on_launch`, `enable_internet_gateway` (both default `true`) |
+| Private EKS endpoint reached through a tunnel | `k8s_proxy_url` (and `K8S_PROXY` for scripts) |
+| Organisation tagging policy, forwarded to instances and volumes | `extra_default_tags` |
+| Load generation with [Stoker](https://github.com/livehybrid/stoker) and search load with [Regulator](https://github.com/livehybrid/regulator) | `sok_enable_stoker`, `sok_enable_regulator` |
 
 ## 📚 Documentation
 

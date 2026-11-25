@@ -12,6 +12,7 @@
 ###############################################################################
 
 terraform {
+
   backend "s3" {
     key     = "sok/terraform.tfstate"
     region  = "eu-west-2"
@@ -19,14 +20,14 @@ terraform {
   }
 }
 
-data "terraform_remote_state" "eks" {
-  backend   = "s3"
-  workspace = var.environment
+//data "terraform_remote_state" "eks" {
+//  backend   = "s3"
+//  workspace = var.environment
 
-  config = {
-    bucket  = var.state_bucket
-    key     = "eks/terraform.tfstate"
-    region  = var.region
-    profile = var.profile
-  }
-}
+//  config = {
+//    bucket  = var.state_bucket
+//    key     = "eks/terraform.tfstate"
+//    region  = var.region
+//    profile = var.profile
+//  }
+//}

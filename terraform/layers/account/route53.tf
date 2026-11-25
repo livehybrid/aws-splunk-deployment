@@ -10,10 +10,6 @@ resource "aws_route53_zone" "public-splunk" {
   count = var.create_dns ? 1 : 0
   name  = var.dns_base_splunk_domain
 
-  tags = {
-    environment = var.environment
-    project     = "splunk"
-  }
 }
 
 data "aws_route53_zone" "public-splunk" {
@@ -29,10 +25,6 @@ resource "aws_route53_zone" "private" {
     vpc_region = var.region
   }
 
-  tags = {
-    environment = var.environment
-    project     = "splunk"
-  }
 }
 
 # Route53's default SOA negative-TTL is 900s: an instance that looks up a

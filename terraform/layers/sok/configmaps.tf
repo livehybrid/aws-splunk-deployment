@@ -60,7 +60,10 @@ locals {
   constrain_conf = {
     key = "server"
     value = {
-      directory = "/opt/splunk/etc/system/local"
+      # NOT system/local: writing server.conf there makes splunk-ansible remove
+      # the file first, taking [general] pass4SymmKey with it. This one wiped the
+      # CM's key on every multisite start. See the overlay_app note in crs.tf.
+      directory = local.overlay_app_dir
       content   = { clustering = { constrain_singlesite_buckets = "false" } }
     }
   }
@@ -84,7 +87,7 @@ locals {
         replication_factor = var.replication_factor
         search_factor      = var.search_factor
       }
-      conf = var.multisite ? concat(local.smartstore_conf, [local.constrain_conf]) : local.smartstore_conf
+      conf = var.multisite ? concat(local.smartstore_conf, [local.constrain_conf, local.overlay_app_conf]) : local.smartstore_conf
     })
   }
 }
@@ -97,6 +100,67 @@ resource "kubernetes_config_map_v1" "cm_defaults" {
 
   data = {
     "default.yml" = yamlencode(local.cm_defaults)
+  }
+
+  depends_on = [kubernetes_namespace_v1.splunk]
+}
+
+###############################################################################
+# SPLUNK_ANSIBLE_POST_TASKS task list for standalone multisite search heads.
+#
+# A FLAT LIST OF TASKS, not a playbook. site.yml consumes ansible_post_tasks with
+# `include_tasks: execute_adhoc_plays.yml` in a loop, so this is included INTO
+# the running play. A play wrapper (hosts/connection/gather_facts) makes ansible
+# read those play keywords as task parameters and fail with:
+#   ERROR! unexpected parameter type in action: <class 'bool'>
+#
+# WHY THIS EXISTS AT ALL, rather than pointing SPLUNK_ANSIBLE_POST_TASKS straight
+# at /opt/ansible/roles/splunk_search_head/tasks/setup_multisite.yml: that was
+# tried and fails. execute_adhoc_plays.yml has a "Fetch adhoc playbooks" step
+# that COPIES the target into /opt/container_artifact/ and includes it from
+# there, so setup_multisite.yml's own relative includes
+# (../../../roles/splunk_common/tasks/wait_for_splunk_instance.yml) resolve
+# against the staging dir and land on /roles/..., which does not exist:
+#   ERROR! Could not find or access '/roles/splunk_common/tasks/wait_for_splunk_instance.yml'
+#
+# include_role does not have that problem. It resolves through the roles path,
+# and the task file then executes from its REAL location, so its relative
+# includes resolve correctly. Nothing is vendored: this calls the vendor's file.
+#
+# splunk.site and splunk.multisite_master come from spec.defaults
+# (local.sh_multisite_defaults in crs.tf), so no set_fact is needed here.
+#
+# IDEMPOTENCE: post tasks run on EVERY pod start and setup_multisite notifies a
+# restart handler, so the btool probe skips it once [clustering] already reads
+# multisite = true. The config persists on the etc PVC, so skipping is correct.
+###############################################################################
+
+resource "kubernetes_config_map_v1" "sh_multisite_post" {
+  count = local.sh_multisite_enabled ? 1 : 0
+
+  metadata {
+    name      = "splunk-sh-multisite-post"
+    namespace = local.namespace
+  }
+
+  data = {
+    "post.yml" = yamlencode([
+      {
+        name         = "Read the current [clustering] stanza"
+        command      = "{{ splunk.exec }} btool server list clustering"
+        register     = "sh_multisite_state"
+        changed_when = false
+        failed_when  = false
+      },
+      {
+        name = "Run splunk_search_head's setup_multisite (splunk_standalone ships none)"
+        include_role = {
+          name       = "splunk_search_head"
+          tasks_from = "setup_multisite"
+        }
+        when = "'multisite = true' not in (sh_multisite_state.stdout | default('') | lower)"
+      },
+    ])
   }
 
   depends_on = [kubernetes_namespace_v1.splunk]

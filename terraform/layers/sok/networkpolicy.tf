@@ -3,8 +3,12 @@
 # the prod VPC, without policies they can reach the prod EC2 estate's
 # LM:8089 / HF:9997 / mgmt ports. This egress-only policy allowlists what
 # Splunk actually needs and cuts everything else VPC-internal:
-#   - anything within the namespace (clustering, bundles, dist search, exec),
-#   - DNS :53 anywhere (coredns svc + node-local cache),
+#   - intra-namespace pod IPs (clustering, bundles, dist search, exec),
+#   - ClusterIP service CIDR (172.20.0.0/16): pods connect to Services by
+#     ClusterIP, not pod IP, so the namespaceSelector alone is insufficient —
+#     kube-proxy/eBPF rewrites the ClusterIP to a pod IP AFTER the network
+#     policy decision, so the policy must explicitly allow the service CIDR.
+#   - DNS :53 anywhere (coredns service + node-local cache),
 #   - TCP :443 anywhere (S3/STS/KMS via public or VPC endpoints, EKS API ENIs).
 # Prod-internal Splunk ports (8089/9997/8000/8088 on EC2 instances) match no
 # rule -> dropped. Ingress is left default-allow (ALB ip-targets, kubelet
@@ -24,10 +28,18 @@ resource "kubernetes_network_policy_v1" "splunk_egress" {
     pod_selector {} # every pod in the namespace
     policy_types = ["Egress"]
 
-    egress { # intra-namespace: replication, bundles, dist search, kubectl exec targets
+    egress { # intra-namespace pod IPs: replication, bundles, dist search, exec
       to {
         namespace_selector {
           match_labels = { "kubernetes.io/metadata.name" = local.namespace }
+        }
+      }
+    }
+
+    egress { # ClusterIP service CIDR — pods reach Services by VIP, not pod IP
+      to {
+        ip_block {
+          cidr = "172.20.0.0/16"
         }
       }
     }

@@ -16,10 +16,12 @@ create_dns             = true
 dns_base_splunk_domain = "splunk.dev.livehybrid.com"
 
 # Separate /24 from prod.
-default_vpc_cidr      = "192.168.20.0/24"
-default_subnet_a_cidr = "192.168.20.0/26"
-default_subnet_b_cidr = "192.168.20.64/26"
-default_subnet_c_cidr = "192.168.20.128/26"
+default_vpc_cidr = "192.168.20.0/24"
+vpc_subnets = {
+  a = "192.168.20.0/26"
+  b = "192.168.20.64/26"
+  c = "192.168.20.128/26"
+}
 
 
 
@@ -69,6 +71,7 @@ eks_console_admin_principal_arns = [
 eks_node_groups = {
   general-a = {
     instance_type = "t3.xlarge"
+    capacity_type = "SPOT" # was the global use_spot = true
     # 2 nodes (~29Gi allocatable) to fit CM/LM/MC/SH + 3 indexers (each 2Gi
     # request); one t3.xlarge can't. No cluster-autoscaler in dev, so desired
     # must be raised explicitly. Keep min=1 (< desired): raising min above the
@@ -91,13 +94,6 @@ replication_factor        = 1
 search_factor             = 1
 sok_indexer_replicas      = 1
 indexer_cache_volume_size = 30
-use_spot                  = true
-
-
-
-
-
-
 trusted_cidrs = [
   "203.0.113.10/32",
   "147.161.224.0/23",

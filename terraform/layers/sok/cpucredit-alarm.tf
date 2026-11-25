@@ -28,9 +28,6 @@
 # (e.g. a group briefly at zero instances) is treated as notBreaching.
 ###############################################################################
 
-locals {
-  node_asg_names = data.terraform_remote_state.eks.outputs.node_group_autoscaling_group_names
-}
 
 # Current instance IDs per ASG (re-resolved each apply, see header). The
 # aws_autoscaling_group data source does NOT expose instance IDs, so resolve them
@@ -104,6 +101,6 @@ resource "aws_cloudwatch_metric_alarm" "node_cpucredit_low" {
   insufficient_data_actions = []
 
   tags = {
-    "splunk.livehybrid.com/deployment-model" = "sok"
+    "splunk-sok/deployment-model" = "sok"
   }
 }

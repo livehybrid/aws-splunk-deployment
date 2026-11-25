@@ -13,17 +13,13 @@
 # to BOTH the link-local 169.254.20.10 AND the kube-dns ClusterIP and sets NOTRACK
 # rules, so pods keep using the kube-dns IP from their resolv.conf and are
 # intercepted locally. Faithful port of the upstream nodelocaldns.yaml
-# (registry.k8s.io/dns/k8s-dns-node-cache), built as typed resources because this
-# layer has no kubectl provider.
+# (registry.k8s.io/dns/k8s-dns-node-cache), built as typed resources because
+# the kubectl provider is reserved for CRDs.
 ###############################################################################
 
 locals {
-  nodelocaldns_ip    = "169.254.20.10"
-  nodelocaldns_image = "registry.k8s.io/dns/k8s-dns-node-cache:1.26.8"
-  # kube-dns Service ClusterIP = .10 of the EKS service CIDR (default
-  # 10.100.0.0/16). __PILLAR__CLUSTER__DNS__ / __PILLAR__UPSTREAM__SERVERS__ stay
-  # literal, the node-cache binary fills them at runtime from -upstreamsvc and
-  # the node's /etc/resolv.conf.
+  nodelocaldns_ip       = "169.254.20.10"
+  nodelocaldns_image    = "${local.ecr_registry}/k8s-public/dns/k8s-dns-node-cache:1.26.8"
   nodelocaldns_corefile = <<-EOT
     cluster.local:53 {
         errors
@@ -33,7 +29,7 @@ locals {
         }
         reload
         loop
-        bind ${local.nodelocaldns_ip} ${var.eks_cluster_dns_ip}
+        bind ${local.nodelocaldns_ip} ${local.dns_ip}
         forward . __PILLAR__CLUSTER__DNS__ {
                 force_tcp
         }
@@ -45,7 +41,7 @@ locals {
         cache 30
         reload
         loop
-        bind ${local.nodelocaldns_ip} ${var.eks_cluster_dns_ip}
+        bind ${local.nodelocaldns_ip} ${local.dns_ip}
         forward . __PILLAR__CLUSTER__DNS__ {
                 force_tcp
         }
@@ -56,7 +52,7 @@ locals {
         cache 30
         reload
         loop
-        bind ${local.nodelocaldns_ip} ${var.eks_cluster_dns_ip}
+        bind ${local.nodelocaldns_ip} ${local.dns_ip}
         forward . __PILLAR__CLUSTER__DNS__ {
                 force_tcp
         }
@@ -67,7 +63,7 @@ locals {
         cache 30
         reload
         loop
-        bind ${local.nodelocaldns_ip} ${var.eks_cluster_dns_ip}
+        bind ${local.nodelocaldns_ip} ${local.dns_ip}
         forward . __PILLAR__UPSTREAM__SERVERS__
         prometheus :9253
         }
@@ -80,7 +76,6 @@ resource "kubernetes_service_account_v1" "node_local_dns" {
     namespace = "kube-system"
     labels    = { "kubernetes.io/cluster-service" = "true" }
   }
-  depends_on = [module.eks]
 }
 
 # Stable upstream for cluster.local queries, selects the CoreDNS pods.
@@ -105,7 +100,10 @@ resource "kubernetes_service_v1" "kube_dns_upstream" {
       target_port = 53
     }
   }
-  depends_on = [module.eks]
+
+  # Same ordering hazard as the splunk operator: a Service create races the ALB
+  # controller's mservice webhook coming up (alb_controller.tf).
+  depends_on = [helm_release.alb_controller]
 }
 
 resource "kubernetes_config_map_v1" "node_local_dns" {
@@ -114,8 +112,6 @@ resource "kubernetes_config_map_v1" "node_local_dns" {
     namespace = "kube-system"
   }
   data = { "Corefile" = local.nodelocaldns_corefile }
-
-  depends_on = [module.eks]
 }
 
 resource "kubernetes_daemon_set_v1" "node_local_dns" {
@@ -159,7 +155,7 @@ resource "kubernetes_daemon_set_v1" "node_local_dns" {
           name  = "node-cache"
           image = local.nodelocaldns_image
           args = [
-            "-localip", "${local.nodelocaldns_ip},${var.eks_cluster_dns_ip}",
+            "-localip", "${local.nodelocaldns_ip},${local.dns_ip}",
             "-conf", "/etc/Corefile",
             "-upstreamsvc", "kube-dns-upstream",
           ]
@@ -235,5 +231,5 @@ resource "kubernetes_daemon_set_v1" "node_local_dns" {
     }
   }
 
-  depends_on = [module.eks]
+  depends_on = [kubernetes_service_v1.kube_dns_upstream]
 }

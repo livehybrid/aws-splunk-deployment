@@ -21,18 +21,18 @@ data "aws_iam_policy_document" "smartstore_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.terraform_remote_state.eks.outputs.oidc_provider_arn]
+      identifiers = [local.oidc_provider_arn]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:sub"
+      variable = "${local.oidc_provider}:sub"
       values   = ["system:serviceaccount:${local.namespace}:splunk-idx"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:aud"
+      variable = "${local.oidc_provider}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -71,6 +71,7 @@ data "aws_iam_policy_document" "smartstore" {
 resource "aws_iam_role" "smartstore" {
   name               = "splunk-sok-${var.environment}-smartstore"
   assume_role_policy = data.aws_iam_policy_document.smartstore_trust.json
+
 }
 
 resource "aws_iam_role_policy" "smartstore" {
