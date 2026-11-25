@@ -3,15 +3,15 @@
 # run under ServiceAccount splunk-idx, whose IAM role mirrors the EC2 indexer
 # role's SmartStore statements, scoped to this workspace's bucket + KMS key.
 #
-# The smartstore volume in the ClusterManager CR carries NO secretRef —
+# The smartstore volume in the ClusterManager CR carries NO secretRef,
 # splunkd reads AWS_WEB_IDENTITY_TOKEN_FILE / AWS_ROLE_ARN (webhook-injected)
 # and uses STS AssumeRoleWithWebIdentity. AWS_STS_REGIONAL_ENDPOINTS=regional
 # is injected by the EKS pod identity webhook by default; the K3 gate asserts
 # it. EKS Pod Identity (the newer mechanism) is NOT confirmed to work with
-# splunkd — stay on IRSA.
+# splunkd, stay on IRSA.
 #
 # Roles are recreated with the cluster's OIDC provider on every nightly
-# destroy/recreate cycle — trust policies are derived, never hand-pasted.
+# destroy/recreate cycle, trust policies are derived, never hand-pasted.
 ###############################################################################
 
 data "aws_iam_policy_document" "smartstore_trust" {
@@ -21,18 +21,18 @@ data "aws_iam_policy_document" "smartstore_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.terraform_remote_state.eks.outputs.oidc_provider_arn]
+      identifiers = [local.oidc_provider_arn]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:sub"
+      variable = "${local.oidc_provider}:sub"
       values   = ["system:serviceaccount:${local.namespace}:splunk-idx"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider}:aud"
+      variable = "${local.oidc_provider}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -71,6 +71,7 @@ data "aws_iam_policy_document" "smartstore" {
 resource "aws_iam_role" "smartstore" {
   name               = "splunk-sok-${var.environment}-smartstore"
   assume_role_policy = data.aws_iam_policy_document.smartstore_trust.json
+
 }
 
 resource "aws_iam_role_policy" "smartstore" {

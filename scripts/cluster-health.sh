@@ -38,11 +38,11 @@ instance_for_role() {
     --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null
 }
 
-# run_splunk <instance-id> <splunk subcommand...> — prints stdout, rc=1 on fail.
+# run_splunk <instance-id> <splunk subcommand...>, prints stdout, rc=1 on fail.
 run_splunk() {
   local id=$1; shift
   local remote params cmd_id status
-  # `|| true` — checks grep for positive markers, so a non-zero splunk exit
+  # `|| true`, checks grep for positive markers, so a non-zero splunk exit
   # (e.g. shcluster-status on a standalone SH) must still return its output
   # rather than tripping SSM's Failed status and swallowing stdout.
   remote="
@@ -110,7 +110,7 @@ else
   # NB: must not match benign output like "kvstore_maintenance_status : disabled".
   if echo "${OUT:-}" | grep -qiE 'not part of a search head cluster|not enabled'; then
     # Standalone SH (dev, enable_shc=false).
-    green "standalone SH (no SHC in this workspace) — skipping SHC checks"
+    green "standalone SH (no SHC in this workspace), skipping SHC checks"
   elif [ -z "$OUT" ]; then
     red "shcluster-status query failed on $SH"
   else
@@ -153,7 +153,7 @@ else
          if echo "$KV" | grep -qE 'replicationStatus'; then
            red "no KV store captain elected"
          else
-           green "standalone KV store (no replication) — captain check n/a"
+           green "standalone KV store (no replication), captain check n/a"
          fi ;;
       *) red "$CAPTAINS KV store captains (split brain?)" ;;
     esac

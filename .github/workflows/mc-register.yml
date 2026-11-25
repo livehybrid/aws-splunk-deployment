@@ -1,5 +1,5 @@
 ###############################################################################
-# MC REGISTER — (re)register every node as a Monitoring Console search peer
+# MC REGISTER, (re)register every node as a Monitoring Console search peer
 # (make mc-register). The MC's mc-register-peers.sh is run over SSM; it is
 # idempotent housekeeping, normally run after a recycle when peer IPs change.
 # Low risk: it only adds/refreshes search-peer entries on the MC.

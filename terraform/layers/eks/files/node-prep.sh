@@ -2,7 +2,7 @@
 # Splunk node prep (runs before nodeadm on AL2023 EKS nodes).
 #
 # THP: Splunk documents >= 30% indexing/search degradation with transparent
-# hugepages enabled, and the operator does not manage node OS settings —
+# hugepages enabled, and the operator does not manage node OS settings,
 # so it is disabled here, persistently (survives reboots via systemd unit).
 set -euo pipefail
 

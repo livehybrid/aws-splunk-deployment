@@ -8,11 +8,11 @@ terraform {
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.33"
+      version = "~> 3.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.16" # v2 keeps the kubernetes{} block syntax
+      version = "~> 3.0" # v3: provider kubernetes = {...} and set = [...] list syntax
     }
     kubectl = {
       source  = "alekc/kubectl"

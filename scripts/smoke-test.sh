@@ -75,7 +75,7 @@ bucket="livehybrid-splunk-${ENV}-splunk-smartstore-${ENV}"
 if aws s3api head-bucket --bucket "$bucket" --region "$REGION" 2>/dev/null; then
   green "$bucket reachable"
 else
-  # Newer naming pattern (with account alias) — fall back.
+  # Newer naming pattern (with account alias), fall back.
   bucket="livehybrid-splunk-${ENV}-splunk-smartstore-${ENV}"
   if aws s3api head-bucket --bucket "$bucket" --region "$REGION" 2>/dev/null; then
     green "$bucket reachable"

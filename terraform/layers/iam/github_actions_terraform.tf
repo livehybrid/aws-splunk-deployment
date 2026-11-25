@@ -21,12 +21,12 @@ data "aws_iam_policy_document" "gha_terraform_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # SEC-2: trust ONLY the default branch — `repo:...:*` let ANY ref (feature
+    # SEC-2: trust ONLY the default branch, `repo:...:*` let ANY ref (feature
     # branches, PR merge refs) assume a PowerUser-grade role. The scheduled and
     # dispatched workflows all run from master once merged; a dispatch from any
     # other branch is now (deliberately) denied. Add specific refs here if a
     # non-master dispatch is ever genuinely needed.
-    # ⚠ Takes effect on the next iam-layer apply — do that AFTER the SOK branch
+    # ⚠ Takes effect on the next iam-layer apply, do that AFTER the SOK branch
     #   merges, or master-less dispatches keep working/failing confusingly.
     condition {
       test     = "StringEquals"
@@ -64,7 +64,7 @@ data "aws_iam_policy_document" "gha_terraform_passrole" {
       "arn:aws:iam::${local.account_id}:role/Splunk*",
       "arn:aws:iam::${local.account_id}:role/splunk-*",
       # eks-layer node-group roles are named after the node-group KEY, not the
-      # estate prefix (module behaviour) — passed to EKS on nodegroup create.
+      # estate prefix (module behaviour), passed to EKS on nodegroup create.
       "arn:aws:iam::${local.account_id}:role/general-*-eks-node-group-*",
     ]
   }

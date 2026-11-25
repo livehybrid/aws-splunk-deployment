@@ -1,15 +1,18 @@
+# Set K8S_PROXY (e.g. socks5://localhost:1080) when the EKS endpoint is private.
+K8S_PROXY_ENV := $(if $(K8S_PROXY),HTTPS_PROXY=$(K8S_PROXY),)
+
 SHELL := /bin/bash
 export AWS_PAGER :=
 .DEFAULT_GOAL := help
 
 help: ## show this help (default target)
-	@echo "LiveHybrid Splunk cluster — make targets:" && echo
+	@echo "LiveHybrid Splunk cluster, make targets:" && echo
 	@grep -hE '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo && echo "Most targets need env=<prod|dev>; some need role=<role>."
 ########################################################################################################################
 ##
-##  Makefile — top-level entry points for the LiveHybrid Splunk cluster.
-##  Use `make terraform env=prod` to apply all layers in order (account → iam → cluster) per workspace.
+##  Makefile, top-level entry points for the LiveHybrid Splunk cluster.
+##  Use `make terraform env=prod` to apply all layers in order (account → iam → eks → sok) per workspace.
 ##
 ########################################################################################################################
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
@@ -17,7 +20,7 @@ activate  = VIRTUAL_ENV_DISABLE_PROMPT=true . .venv/bin/activate;
 pwd       := ${PWD}
 dirname   := $(notdir ${PWD})
 
-standard_terraform_layers := account iam cluster
+standard_terraform_layers := account iam eks sok
 
 SPLUNK_VERSION_LIST_URL := https://raw.githubusercontent.com/livehybrid/downloadSplunk/refs/heads/main/version.list
 
@@ -46,7 +49,7 @@ terraform-clean:
 		make -C terraform/layers/$$layer terraform-clean; \
 	done
 
-terraform: guard-env ## apply all layers in order (account -> iam -> cluster)
+terraform: guard-env ## apply all layers in order (account -> iam -> eks -> sok)
 	for layer in $(standard_terraform_layers); do \
 		env=$(env) make -C terraform/layers/$$layer terraform; \
 	done
@@ -62,190 +65,30 @@ terraform-validate: guard-env ## validate all layers
 	done
 
 ########################################################################################################################
-## packer — builds the Splunk Enterprise AMI for the target workspace.
-########################################################################################################################
-
-packer-build-splunk: guard-env ## build the Splunk AMI
-	$(MAKE) -C packer/splunk packer-build env=$(env)
-
-packer-validate-splunk: guard-env ## validate the packer template
-	$(MAKE) -C packer/splunk packer-validate env=$(env)
-
-########################################################################################################################
-## Splunk version list — refresh the cached release list and print the 10.x line.
-########################################################################################################################
-
-splunk-versions: ## list available Splunk 10.x versions
-	@curl -fsSL $(SPLUNK_VERSION_LIST_URL) -o /tmp/splunk-versions.csv
-	@echo "Splunk Enterprise 10.x:"
-	@awk -F, '$$1 ~ /^10\./ {printf "  %s (build %s)\n", $$1, $$2}' /tmp/splunk-versions.csv
-
-splunk-version-latest:
-	@curl -fsSL $(SPLUNK_VERSION_LIST_URL) | awk -F, '$$1 ~ /^10\./ {v=$$1; b=$$2} END {printf "splunk_version = \"%s\"\nsplunk_build   = \"%s\"\n", v, b}'
-
-########################################################################################################################
-## infracost — repo-wide cost breakdown across both workspaces.
-########################################################################################################################
-
-infracost-breakdown: ## monthly cost breakdown (all projects)
-	infracost breakdown --config-file=infracost.yml --format=table
-
-infracost-diff:
-	infracost diff --config-file=infracost.yml --compare-to=infracost-base.json --format=table
-
-########################################################################################################################
-## Recycle — terminate every Splunk instance in <env>. The ASGs immediately
-##           launch fresh replacements from the latest launch template, so
-##           this is the fast path to redeploy after an AMI rebuild or a
-##           bootstrap-script change. SmartStore S3 data survives;
-##           in-flight events on the local cache are lost.
+## SOK (Splunk Operator for Kubernetes), operations for the eks + sok layers.
 ##
-##   make recycle env=prod                    — every Splunk role
-##   make recycle env=prod role=indexer       — just one role
-########################################################################################################################
-
-role =
-
-recycle: guard-env ## terminate instances; ASGs relaunch fresh (role=<r> to scope)
-	@FILTERS='Name=tag:environment,Values=$(env) Name=instance-state-name,Values=running'; \
-	if [ -n "$(role)" ]; then FILTERS="$$FILTERS Name=tag:role,Values=$(role)"; fi; \
-	IDS=$$(aws ec2 describe-instances --filters $$FILTERS --query 'Reservations[].Instances[].InstanceId' --output text); \
-	if [ -z "$$IDS" ]; then echo "No instances to recycle."; exit 0; fi; \
-	echo "Terminating: $$IDS"; \
-	aws ec2 terminate-instances --instance-ids $$IDS \
-	  --query 'TerminatingInstances[].[InstanceId,CurrentState.Name]' --output table
-
-########################################################################################################################
-## Smoke / status / ssm — operational helpers.
-##
-##   make smoke env=prod                    — AWS-side health checks
-##   make status env=prod                   — quick instance + ASG inventory
-##   make ssm env=prod role=manager         — open an SSM session to a role
-##                                            (picks the first running instance)
-########################################################################################################################
-
-smoke: guard-env ## AWS-side checks: ASGs, instances, target groups, DNS
-	./scripts/smoke-test.sh $(env)
-
-status: guard-env ## instance + ASG inventory
-	@echo "=== ASGs ==="; \
-	aws autoscaling describe-auto-scaling-groups \
-	  --query "AutoScalingGroups[?starts_with(AutoScalingGroupName,\`$(env)-\`)].[AutoScalingGroupName,DesiredCapacity,length(Instances)]" \
-	  --output table
-	@echo "=== Instances ==="; \
-	aws ec2 describe-instances \
-	  --filters Name=tag:project,Values=splunk \
-	            Name=tag:environment,Values=$(env) \
-	            Name=instance-state-name,Values=running \
-	  --query 'Reservations[].Instances[].[InstanceId,InstanceType,InstanceLifecycle,Tags[?Key==`role`]|[0].Value,PrivateIpAddress]' \
-	  --output table
-
-ssm: guard-env guard-role ## interactive shell on a role via SSM
-	@ID=$$(aws ec2 describe-instances \
-	  --filters Name=tag:project,Values=splunk \
-	            Name=tag:environment,Values=$(env) \
-	            Name=tag:role,Values=$(role) \
-	            Name=instance-state-name,Values=running \
-	  --query 'Reservations[0].Instances[0].InstanceId' --output text); \
-	if [ -z "$$ID" ] || [ "$$ID" = "None" ]; then echo "no running $(role) instance found in env=$(env)"; exit 1; fi; \
-	echo "Opening SSM session to $$ID..."; \
-	aws ssm start-session --target $$ID
-
-########################################################################################################################
-## Splunk cluster operations — all via SSM, nothing inbound required.
-##
-##   make health env=prod                      — deep Splunk-side health report
-##                                               (cluster RF/SF, SHC captaincy,
-##                                               KV store sync, licence, MC)
-##   make splunk-cmd env=prod role=manager cmd="show cluster-status"
-##                                             — run any splunk CLI command
-##   make push-cluster-bundle env=prod         — validate + apply the manager's
-##                                               manager-apps bundle to peers
-##   make push-shc-bundle env=prod             — deployer push of shcluster/apps
-##                                               to the SHC (any member target)
-##   make rolling-restart env=prod role=indexer    — CM-coordinated peer restart
-##   make rolling-restart env=prod role=searchhead — SHC rolling restart
-########################################################################################################################
-
-health: guard-env ## deep Splunk checks: RF/SF, SHC captaincy, KV store, licence, MC
-	./scripts/cluster-health.sh $(env)
-
-splunk-cmd: guard-env guard-role guard-cmd ## run any splunk CLI command (cmd="...")
-	./scripts/splunk-cmd.sh $(env) $(role) $(cmd)
-
-push-cluster-bundle: guard-env ## validate + apply manager-apps bundle to indexers
-	./scripts/splunk-cmd.sh $(env) manager validate cluster-bundle --check-restart
-	./scripts/splunk-cmd.sh $(env) manager apply cluster-bundle --answer-yes
-	./scripts/splunk-cmd.sh $(env) manager show cluster-bundle-status
-
-push-shc-bundle: guard-env ## deployer push of shcluster/apps to the SHC
-	@SH_IP=$$(aws ec2 describe-instances \
-	  --filters Name=tag:project,Values=splunk \
-	            Name=tag:environment,Values=$(env) \
-	            Name=tag:role,Values=searchhead \
-	            Name=instance-state-name,Values=running \
-	  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text); \
-	if [ -z "$$SH_IP" ] || [ "$$SH_IP" = "None" ]; then echo "no running searchhead in env=$(env)"; exit 1; fi; \
-	echo "Deployer push targeting SHC member https://$$SH_IP:8089"; \
-	./scripts/splunk-cmd.sh $(env) deployer apply shcluster-bundle --answer-yes -target "https://$$SH_IP:8089"
-
-rolling-restart: guard-env guard-role ## rolling restart (role=indexer|searchhead)
-	@case "$(role)" in \
-	  indexer)    ./scripts/splunk-cmd.sh $(env) manager rolling-restart cluster-peers ;; \
-	  searchhead) ./scripts/splunk-cmd.sh $(env) searchhead rolling-restart shcluster-members ;; \
-	  *) echo "role must be 'indexer' or 'searchhead'"; exit 1 ;; \
-	esac
-
-rotate-admin: guard-env ## rotate the splunkadmin password fleet-wide
-	./scripts/rotate-splunk-admin.sh $(env)
-
-deploy-apps: guard-env ## sync + push apps per tier: scope=idx|shc|ds|cm|all (default all)
-	./scripts/deploy-apps.sh $(env) $(or $(scope),all)
-
-mc-register: guard-env ## (re)register all nodes as MC search peers — run after recycles
-	@ID=$$(aws ec2 describe-instances \
-	  --filters Name=tag:project,Values=splunk \
-	            Name=tag:environment,Values=$(env) \
-	            Name=tag:role,Values=monitoring_console \
-	            Name=instance-state-name,Values=running \
-	  --query 'Reservations[0].Instances[0].InstanceId' --output text); \
-	if [ -z "$$ID" ] || [ "$$ID" = "None" ]; then echo "no running MC in env=$(env)"; exit 1; fi; \
-	CMD=$$(aws ssm send-command --instance-ids $$ID --document-name AWS-RunShellScript \
-	  --parameters 'commands=["/opt/splunk/bin/mc-register-peers.sh"]' \
-	  --query 'Command.CommandId' --output text); \
-	until S=$$(aws ssm get-command-invocation --command-id $$CMD --instance-id $$ID --query Status --output text 2>/dev/null) && [ "$$S" != "InProgress" ] && [ "$$S" != "Pending" ]; do sleep 5; done; \
-	aws ssm get-command-invocation --command-id $$CMD --instance-id $$ID --query StandardOutputContent --output text
-
-password: ## print the current splunkadmin password (from Secrets Manager)
-	@aws secretsmanager get-secret-value --secret-id /monitoring/splunk/password --query SecretString --output text
-
-########################################################################################################################
-## SOK (Splunk Operator for Kubernetes) — deployment_model=sok. Parallels the
-## EC2 targets above (status/ssm/health/deploy-apps) for the eks+sok layers.
-##
-##   make kubeconfig env=dev                 — point kubectl at the SOK cluster
-##   make sok-status env=dev                 — CR phases + pods
-##   make kexec env=dev role=cm|indexer|sh|lm|mc — shell into a Splunk pod
-##   make sok-health env=dev                 — deep Splunk checks (RF/SF, KV, licence)
-##   make sok-deploy-apps env=dev [scope=all] — package apps -> S3 -> poll install
+##   make kubeconfig env=dev, point kubectl at the SOK cluster
+##   make sok-status env=dev, CR phases + pods
+##   make kexec env=dev role=cm|indexer|sh|lm|mc, shell into a Splunk pod
+##   make sok-health env=dev, deep Splunk checks (RF/SF, KV, licence)
+##   make sok-deploy-apps env=dev [scope=all], package apps -> S3 -> poll install
 ########################################################################################################################
 
 kubeconfig: guard-env ## point kubectl at the SOK EKS cluster
 	aws eks update-kubeconfig --name splunk-sok-$(env) --region eu-west-2
 
 sok-password: guard-env ## print the SOK admin password (env-scoped secret)
-	@if [ "$(env)" = "dev" ]; then SID=/dev/splunk/password; else SID=/monitoring/splunk/password; fi; \
-	aws secretsmanager get-secret-value --secret-id $$SID --query SecretString --output text
+	@aws secretsmanager get-secret-value --secret-id /$(env)/splunk/password --query SecretString --output text
 
 sok-hec-token: guard-env ## print the HEC token (operator-generated; rotates each rebuild)
 	@kubectl get secret splunk-splunk-secret -n splunk -o jsonpath='{.data.hec_token}' | base64 -d; echo
 
-sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_external_enabled) — read live from the ALB Ingresses
+sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_external_enabled), read live from the ALB Ingresses
 	@echo "=== external URLs (per-component ALB Ingress hosts) ==="; \
 	kubectl get ingress -n splunk \
 	  -o jsonpath='{range .items[*]}{range .spec.rules[*]}https://{.host}{"\n"}{end}{end}' 2>/dev/null \
 	  | sort -u | sed '/^https:\/\/$$/d' \
-	  || { echo "(no Ingress — external web disabled, or run 'make kubeconfig env=$(env)')"; exit 0; }; \
+	  || { echo "(no Ingress, external web disabled, or run 'make kubeconfig env=$(env)')"; exit 0; }; \
 	echo "=== ALB DNS (CNAME target) ==="; \
 	kubectl get ingress -n splunk \
 	  -o jsonpath='{range .items[*]}{.status.loadBalancer.ingress[*].hostname}{"\n"}{end}' 2>/dev/null | sort -u; \
@@ -253,9 +96,34 @@ sok-urls: guard-env ## print external Splunk Web + HEC URLs (when sok_web_extern
 
 sok-status: guard-env ## SOK CR phases + pods
 	@echo "=== CRs ==="; \
-	kubectl get clustermanager,indexercluster,searchheadcluster,standalone,licensemanager,monitoringconsole -n splunk 2>/dev/null || echo "(no cluster — run 'make kubeconfig env=$(env)' and ensure the eks/sok layers are applied)"; \
+	kubectl get clustermanager,indexercluster,searchheadcluster,standalone,licensemanager,monitoringconsole -n splunk 2>/dev/null || echo "(no cluster, run 'make kubeconfig env=$(env)' and ensure the eks/sok layers are applied)"; \
 	echo "=== pods ==="; \
 	kubectl get pods -n splunk -o wide 2>/dev/null
+
+sok-nodes: ## EKS nodes: node group, AZ, instance type + EC2 instance ID (console lookup)
+    
+	@OUT=$$($(K8S_PROXY_ENV) kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.labels.splunk-sok/node-group}{"\t"}{.metadata.labels.topology\.kubernetes\.io/zone}{"\t"}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\t"}{.metadata.name}{"\t"}{.spec.providerID}{"\n"}{end}' 2>/dev/null); \
+	if [ -z "$$OUT" ]; then echo "(no nodes — run 'make kubeconfig env=<env>', or the eks layer is destroyed)"; exit 0; fi; \
+	{ printf 'GROUP\tZONE\tTYPE\tREADY\tNODE\tINSTANCE\n'; echo "$$OUT"; } \
+	  | awk -F'\t' '{ for (i = 1; i <= 6; i++) { v = ($$i == "" ? "-" : $$i); \
+	                    if (i == 6) sub(/^aws:\/\/\/[^\/]*\//, "", v); \
+	                    cell[NR, i] = v; if (length(v) > w[i]) w[i] = length(v) } } \
+	      END { for (r = 1; r <= NR; r++) { s = ""; \
+	              for (i = 1; i <= 6; i++) s = s sprintf("%-" (w[i] + 2) "s", cell[r, i]); \
+	              sub(/ +$$/, "", s); print s } }'
+
+sok-pods: ## pods in namespace splunk (-o wide) annotated with the node group each landed on
+	@{ $(K8S_PROXY_ENV) kubectl get nodes -o jsonpath='{range .items[*]}{"#NODE "}{.metadata.name}{" "}{.metadata.labels.splunk-sok/node-group}{"\n"}{end}' 2>/dev/null; \
+	$(K8S_PROXY_ENV) kubectl get pods -n splunk -o wide 2>/dev/null; } \
+| awk '$$1 == "#NODE" { if ($$2 != "") grp[$$2] = ($$3 == "" ? "-" : $$3); next } \
+		{ n++; line[n] = $$0; if (length($$0) > w) w = length($$0); \
+			if (n == 1) { tail[n] = "NODEGROUP"; next } \
+			tail[n] = "-"; \
+			for (nn in grp) if (index($$0, nn) > 0) { tail[n] = grp[nn]; break } } \
+		END { if (n == 0) { print "(no pods in namespace splunk — if the cluster is unreachable, run: make kubeconfig env=$(env))"; exit } \
+				for (i = 1; i <= n; i++) printf "%-" w "s  %s\n", line[i], tail[i] }'
+
+
 
 kexec: guard-env guard-role ## shell into a Splunk pod (role=cm|indexer|sh|lm|mc)
 	@case "$(role)" in \
@@ -288,14 +156,14 @@ sok-kvstore-restore: guard-env ## restore the SHC KV store from S3 (latest, or a
 sok-rf-remediate: guard-env ## fix the SmartStore cold-boot RF stall (safe no-op when healthy)
 	./scripts/sok-rf-remediate.sh $(env)
 
-# Guarded apply for the sok layer: plans, detects Splunk-CR changes, and — if
-# the cluster is LIVE — lists exactly what the operator will restart (SHC rolls
+# Guarded apply for the sok layer: plans, detects Splunk-CR changes, and, if
+# the cluster is LIVE, lists exactly what the operator will restart (SHC rolls
 # one member at a time; CM/LM/MC/deployer are singletons and blip) and requires
 # a typed ROLL / CONFIRM=ROLL. Stage across CRs with target='<address>'.
 sok-apply: guard-env ## apply sok layer with live-restart guardrail (target=<addr> to stage)
 	./scripts/sok-apply-guard.sh $(env) $(target)
 
-## docs — MkDocs Material site (docs/ + mkdocs.yml). Published to GitHub
+## docs, MkDocs Material site (docs/ + mkdocs.yml). Published to GitHub
 ##        Pages by .github/workflows/docs.yml once the repo is public.
 docs-serve: ## live-preview the docs on http://127.0.0.1:8000
 	@command -v mkdocs >/dev/null || pip install mkdocs-material
@@ -304,3 +172,13 @@ docs-serve: ## live-preview the docs on http://127.0.0.1:8000
 docs-build: ## strict docs build (same as CI)
 	@command -v mkdocs >/dev/null || pip install mkdocs-material
 	mkdocs build --strict
+
+########################################################################################################################
+## terraform-docs, per-layer/module README reference (BEGIN_TF_DOCS markers).
+########################################################################################################################
+
+tf_doc_dirs := terraform/layers/account terraform/layers/iam terraform/layers/eks terraform/layers/sok terraform/layers/_shared terraform/modules/s3_bucket_policy
+
+terraform-docs: ## regenerate the per-layer/module README reference (needs terraform-docs)
+	@command -v terraform-docs >/dev/null || { echo "terraform-docs not found: https://terraform-docs.io/user-guide/installation/"; exit 1; }
+	@for d in $(tf_doc_dirs); do terraform-docs -c .terraform-docs.yml "$$d" >/dev/null && echo "  $$d/README.md"; done

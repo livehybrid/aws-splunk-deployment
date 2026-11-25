@@ -2,33 +2,35 @@
 
 ## Apply order
 
-Per workspace (`prod`, `dev`):
+Per workspace (`prod`, `dev`), the bring-up order is:
 
-1. **Packer** — build the Splunk Enterprise AMI, paste the AMI ID into
-   `terraform/layers/_shared/vars/<env>.tfvars`.
+1. **bootstrap** (out-of-band), the state bucket and the GitHub OIDC provider.
 2. **Terraform layers, strictly in order** (outputs feed forward):
-   `account` → `iam` → `cluster`.
+   `account` → `iam` → `eks` → `sok`.
 
 ```sh
-make splunk-versions                  # look up current Splunk 10.x + build
-make packer-build-splunk env=prod     # build AMI (or use the GitHub Action)
-# paste AMI ID into terraform/layers/_shared/vars/prod.tfvars
-make terraform env=prod               # walks account → iam → cluster
+make terraform env=dev    # walks account → iam → eks → sok
 ```
+
+The `account` layer holds the persistent data (SmartStore + apps + KV-backup
+S3 buckets, KMS, the HEC-token secret) and is applied once. `eks` and `sok` are
+the disposable compute: `eks` is the cluster, node groups, addons and
+StorageClasses; `sok` is the operator, the CRDs and the Splunk Custom
+Resources.
 
 ## First deploy from zero
 
 One-time prerequisites before the first `make terraform` in a fresh account:
 
-1. **State bucket** — the `<account-alias>-terraform` S3 bucket referenced by
-   each layer's backend config must exist (versioned, encrypted). Create it
-   manually; the account layer then attaches its bucket policy.
-2. **Route53 public hosted zone** for the external domain — ACM certificate
-   validation in the cluster layer writes records into it, so it must be
-   delegated and resolving first.
-3. **Workspaces** — on first init in each layer:
-   `terraform workspace new prod` (and `dev`).
-4. **Operator-supplied secrets** — create before the cluster layer applies:
+1. **State bucket**, the `<account-alias>-terraform` S3 bucket referenced by
+   each layer's backend config must exist (versioned, encrypted). Create it as
+   part of bootstrap; the account layer then attaches its bucket policy.
+2. **Route53 public hosted zone** for the external domain, external web/HEC
+   DNS records are written into it, so it must be delegated and resolving
+   first.
+3. **Workspaces**, on first init in each layer:
+   `terraform workspace new dev` (and `prod`).
+4. **Operator-supplied secrets**, create before the sok layer applies:
 
    ```sh
    aws secretsmanager create-secret --name /monitoring/splunk/license \
@@ -39,28 +41,28 @@ One-time prerequisites before the first `make terraform` in a fresh account:
      --secret-string 'https://hooks.slack.com/services/...'
    ```
 
-   `/monitoring/splunk/password` and `/splunk/pass4SymmKey` are created by the
-   iam layer itself — rotate their values after the first apply if you didn't
-   set them deliberately (`make rotate-admin env=prod` handles the admin
-   password fleet-wide).
+   The Splunk admin password (`/<env>/splunk/password` for dev,
+   `/monitoring/splunk/password` for prod) and `/splunk/pass4SymmKey` seed the
+   operator global secret (`splunk-<ns>-secret`), rotate their values after
+   the first apply if you didn't set them deliberately.
 
-5. **GitHub Actions OIDC** (optional, for CI start/stop/checks): run
-   `./scripts/setup-github-oidc.sh livehybrid/aws-splunk-cluster` and store
-   the printed role ARNs as repo variables `AWS_PACKER_ROLE_ARN` and
-   `AWS_TERRAFORM_ROLE_ARN`.
+5. **GitHub Actions OIDC** (for CI start/stop/checks): the OIDC provider is
+   created at bootstrap and the CI role in the `iam` layer. Store the printed
+   role ARN as the repo variable `AWS_TERRAFORM_ROLE_ARN`.
 
 ## Verifying a deploy
 
 ```sh
-make smoke env=prod    # AWS-side: ASGs, target groups, DNS, S3
-make health env=prod   # Splunk-side via SSM: RF/SF, SHC, KV store, licence, MC
+make kubeconfig env=dev   # point kubectl at the splunk-sok-<env> EKS cluster
+make sok-status env=dev   # CR phases (CM / IndexerCluster / Standalone / LM / MC) + pods
+make sok-health env=dev   # deep Splunk checks via kubectl exec: RF/SF, SHC, KV store, licence
 ```
 
-Bootstrap takes ~5-10 min after instance launch; a cold boot against a
-populated SmartStore bucket can take a few minutes more to meet RF/SF.
-`health` is meaningful only once `smoke` passes. The
-[checks workflow](ci.md) runs both automatically after every CI START with
-retries to ride out this window.
+A cold boot against a populated SmartStore bucket can take a few minutes to
+meet RF/SF. `sok-health` is meaningful only once the CRs reach `Ready`. The
+[SOK CHECKS workflow](ci.md) runs the same checks automatically after every
+SOK START with retries to ride out this window. See the
+[operations runbook](kubernetes-sok-runbook.md) for the full day-2 flow.
 
 ## Local docs
 

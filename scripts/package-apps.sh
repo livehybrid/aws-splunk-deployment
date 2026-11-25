@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Package the apps repo into per-scope tarballs and upload them to the SOK apps
 # bucket (App Framework source). The SOK counterpart of deploy-apps.sh's EC2
-# git-sync — under deployment_model=sok apps flow git -> S3 -> operator Download
+# git-sync, under deployment_model=sok apps flow git -> S3 -> operator Download
 # -> PodCopy instead of being cloned on-instance.
 #
 #   ./scripts/package-apps.sh <env> [scope]
 #
-#   scope: all (default) | cm | sh | idx | shc | mc  — which tier prefix(es) to sync
+#   scope: all (default) | cm | sh | idx | shc | mc, which tier prefix(es) to sync
 #
 # Repo dir  ->  S3 prefix   ->  reaches (via the CR appFrameworkConfig)
 #   apps/          cm-apps/      ClusterManager  (scope local, CM's etc/apps)
@@ -14,11 +14,11 @@
 #   manager-apps/  idx-apps/     indexers        (CM, scope cluster -> bundle)
 #   shcluster/apps/ shc-apps/    SHC members     (scope local)   [prod]
 #   mc-apps/       mc-apps/      MonitoringConsole (scope local)
-#   deployment-apps/  —          skipped: no DS CRD in SOK (edge stays EC2)
+#   deployment-apps/, skipped: no DS CRD in SOK (edge stays EC2)
 #
 # ⚠ Archive filenames are STABLE forever (change detection is Etag-by-filename;
-#   a rename breaks upgrade tracking — SOK #1105). Never embed versions.
-# ⚠ Deleting an archive does NOT uninstall the app (#893) — retire by shipping a
+#   a rename breaks upgrade tracking, SOK #1105). Never embed versions.
+# ⚠ Deleting an archive does NOT uninstall the app (#893), retire by shipping a
 #   final version with state=disabled in app.conf.
 # ⚠ These apps carry EC2-specific bits (#splunksecret:...# placeholders, a prod
 #   master_uri) that are substituted on-instance on EC2 but NOT by App Framework.
@@ -44,7 +44,7 @@ git clone --depth 1 "https://${TOKEN}@${APPS_REPO}" "$WORK/repo" 2>&1 | grep -v 
 unset TOKEN
 [ -d "$WORK/repo" ] || { echo "clone failed" >&2; exit 1; }
 
-# (source dir, prefix, scope-tag) — one row per upload target.
+# (source dir, prefix, scope-tag), one row per upload target.
 MAP="
 apps|cm-apps|cm
 apps|sh-apps|sh
@@ -58,7 +58,7 @@ while IFS='|' read -r src prefix tag; do
   [ -z "${src:-}" ] && continue
   [ "$SCOPE" = "all" ] || [ "$SCOPE" = "$tag" ] || continue
   srcdir="$WORK/repo/$src"
-  [ -d "$srcdir" ] || { echo "   (no $src/ in repo — skip $prefix)"; continue; }
+  [ -d "$srcdir" ] || { echo "   (no $src/ in repo, skip $prefix)"; continue; }
   for appdir in "$srcdir"/*/; do
     [ -d "$appdir" ] || continue
     app="$(basename "$appdir")"

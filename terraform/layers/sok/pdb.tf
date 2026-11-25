@@ -1,5 +1,5 @@
 ###############################################################################
-# PodDisruptionBudgets — the operator creates none. Keep >=1 indexer available
+# PodDisruptionBudgets, the operator creates none. Keep >=1 indexer available
 # per site during voluntary disruptions (node drain/upgrade) so an eviction
 # can't breach RF/SF. Also an SHC PDB (minAvailable 2 of 3) in prod.
 #
@@ -13,7 +13,7 @@
 ###############################################################################
 
 # Single-site (dev): one PDB over the single IndexerCluster's peers (only when
-# it has >1 replica — so a 1-indexer dev gets none).
+# it has >1 replica, so a 1-indexer dev gets none).
 resource "kubernetes_pod_disruption_budget_v1" "indexers" {
   count = !var.multisite && var.sok_indexer_replicas > 1 ? 1 : 0
 
@@ -47,18 +47,19 @@ resource "kubernetes_pod_disruption_budget_v1" "indexers_site" {
   depends_on = [kubernetes_namespace_v1.splunk]
 }
 
-# SHC (prod): keep a quorum (2 of 3) available during voluntary disruptions.
+# SHC (prod): keep a quorum (2 of 3) available per SHC during voluntary disruptions.
+# Only created when the SHC has >1 replica (a 1-member SHC makes an un-evictable pod).
 resource "kubernetes_pod_disruption_budget_v1" "shc" {
-  count = var.enable_shc ? 1 : 0
+  for_each = { for k, v in local.shc_map : k => v if v.replicas > 1 }
 
   metadata {
-    name      = "splunk-shc-search-head-pdb"
+    name      = "splunk-shc-${each.key}-search-head-pdb"
     namespace = local.namespace
   }
   spec {
     min_available = 2
     selector {
-      match_labels = { "app.kubernetes.io/instance" = "splunk-shc-search-head" }
+      match_labels = { "app.kubernetes.io/instance" = "splunk-shc-${each.key}-search-head" }
     }
   }
   depends_on = [kubernetes_namespace_v1.splunk]

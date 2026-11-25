@@ -12,12 +12,13 @@ output "cluster_certificate_authority_data" {
 }
 
 output "oidc_provider" {
-  description = "OIDC issuer URL (no scheme) — IRSA trust-policy conditions key off this."
+  description = "OIDC issuer URL (no scheme), IRSA trust-policy conditions key off this."
   value       = module.eks.oidc_provider
 }
 
 output "oidc_provider_arn" {
-  value = module.eks.oidc_provider_arn
+  description = "ARN of the IAM OIDC provider for IRSA. Module v21 no longer creates this; we own it (eks.tf). The sok layer's Splunk IRSA trust policies read this via remote state."
+  value       = aws_iam_openid_connect_provider.this.arn
 }
 
 output "node_security_group_id" {

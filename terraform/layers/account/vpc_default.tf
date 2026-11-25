@@ -5,9 +5,7 @@ resource "aws_vpc" "default" {
   instance_tenancy     = "default"
 
   tags = {
-    Name    = var.environment
-    source  = "terraform"
-    project = "splunk"
+    Name = "splunk-sok-${var.environment}"
   }
 }
 
@@ -23,90 +21,53 @@ resource "aws_default_security_group" "default" {
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name        = "default"
-    Description = "default vpc default sg"
-    source      = "terraform"
-    project     = "splunk"
+    Name = "default"
   }
 }
 
-resource "aws_subnet" "default_a" {
+resource "aws_subnet" "default" {
+  for_each = var.vpc_subnets
+
   vpc_id                  = aws_vpc.default.id
-  cidr_block              = var.default_subnet_a_cidr
-  availability_zone       = "eu-west-2a"
-  map_public_ip_on_launch = true
+  cidr_block              = each.value
+  availability_zone       = "${var.region}${each.key}"
+  map_public_ip_on_launch = var.map_public_ip_on_launch
 
   tags = {
-    Name    = "default-a"
-    source  = "terraform"
-    project = "splunk"
+    Name = "default-${each.key}"
   }
 }
 
-resource "aws_subnet" "default_b" {
-  vpc_id                  = aws_vpc.default.id
-  cidr_block              = var.default_subnet_b_cidr
-  availability_zone       = "eu-west-2b"
-  map_public_ip_on_launch = true
+resource "aws_route_table_association" "default" {
+  for_each = aws_subnet.default
 
-  tags = {
-    Name    = "default-b"
-    source  = "terraform"
-    project = "splunk"
-  }
-}
-
-resource "aws_subnet" "default_c" {
-  vpc_id                  = aws_vpc.default.id
-  cidr_block              = var.default_subnet_c_cidr
-  availability_zone       = "eu-west-2c"
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name    = "default-c"
-    source  = "terraform"
-    project = "splunk"
-  }
-}
-
-resource "aws_route_table_association" "default_to_a" {
-  subnet_id      = aws_subnet.default_a.id
-  route_table_id = aws_default_route_table.default.id
-}
-
-resource "aws_route_table_association" "default_to_b" {
-  subnet_id      = aws_subnet.default_b.id
-  route_table_id = aws_default_route_table.default.id
-}
-
-resource "aws_route_table_association" "default_to_c" {
-  subnet_id      = aws_subnet.default_c.id
+  subnet_id      = each.value.id
   route_table_id = aws_default_route_table.default.id
 }
 
 resource "aws_default_route_table" "default" {
   default_route_table_id = aws_vpc.default.default_route_table_id
+  timeouts {
+    create = "5m"
+    update = "5m"
+  }
 
   tags = {
-    Name    = "default"
-    source  = "terraform"
-    project = "splunk"
+    Name = "default-sok"
   }
 }
 
 resource "aws_route" "default_to_igw" {
+  count                  = var.enable_internet_gateway ? 1 : 0
   route_table_id         = aws_default_route_table.default.id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.default.id
+  gateway_id             = aws_internet_gateway.default[0].id
 }
 
 resource "aws_network_acl" "custom" {
-  vpc_id = aws_vpc.default.id
-  subnet_ids = [
-    aws_subnet.default_a.id,
-    aws_subnet.default_b.id,
-    aws_subnet.default_c.id,
-  ]
+  vpc_id     = aws_vpc.default.id
+  subnet_ids = [for s in aws_subnet.default : s.id]
+
   tags = {
     Name = "custom"
   }
@@ -125,13 +86,57 @@ resource "aws_network_acl_rule" "custom_auto" {
 }
 
 resource "aws_internet_gateway" "default" {
+  count  = var.enable_internet_gateway ? 1 : 0
   vpc_id = aws_vpc.default.id
 
   tags = {
-    Name    = "default"
-    source  = "terraform"
-    project = "splunk"
+    Name = "default"
   }
 }
 
+# -- State moves from the pre-for_each layout ---------------------------------
+# Subnets and their route-table associations were three hand-written resources
+# (default_a/b/c); they are now one for_each over var.vpc_subnets. The internet
+# gateway and its route became optional (count). These blocks let an existing
+# deployment adopt the new addresses in place; without them the plan would
+# replace every subnet, and everything running in them.
 
+moved {
+  from = aws_subnet.default_a
+  to   = aws_subnet.default["a"]
+}
+
+moved {
+  from = aws_subnet.default_b
+  to   = aws_subnet.default["b"]
+}
+
+moved {
+  from = aws_subnet.default_c
+  to   = aws_subnet.default["c"]
+}
+
+moved {
+  from = aws_route_table_association.default_to_a
+  to   = aws_route_table_association.default["a"]
+}
+
+moved {
+  from = aws_route_table_association.default_to_b
+  to   = aws_route_table_association.default["b"]
+}
+
+moved {
+  from = aws_route_table_association.default_to_c
+  to   = aws_route_table_association.default["c"]
+}
+
+moved {
+  from = aws_internet_gateway.default
+  to   = aws_internet_gateway.default[0]
+}
+
+moved {
+  from = aws_route.default_to_igw
+  to   = aws_route.default_to_igw[0]
+}
