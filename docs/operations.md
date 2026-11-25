@@ -30,9 +30,10 @@ radius, DR posture, KV backup/restore, the EKS version cliff) lives in the
 | Command | What it does |
 | --- | --- |
 | **SOK START** (GitHub Action or `make terraform`) | apply `eks` then `sok` (~20–25 min); the cluster cold-boots and self-assembles |
-| **SOK STOP** (Action, nightly 21:30 UTC for dev) | the only route to ~$0 overnight: a full **destroy** of `sok` then `eks`, an EKS control plane bills ~$0.10/hr just for existing. The persistent data in the `account` layer (SmartStore + apps + KV-backup S3/KMS) survives |
+| **SOK STOP** (Action, nightly 21:30 UTC for dev) | the only route to ~$0 overnight: a full **destroy** of `ep` (when applied), `sok` then `eks`, an EKS control plane bills ~$0.10/hr just for existing. The persistent data in the `account` layer (SmartStore + apps + KV-backup S3/KMS) survives |
 
-⚠ **Stop is a full destroy/recreate, not a park.** Order matters: destroy sok
+⚠ **Stop is a full destroy/recreate, not a park.** Order matters: destroy ep if it was applied (only the sok layer's
+controller can delete its NLBs), then destroy sok
 (namespace deletion cascades the PVCs while the CSI driver still exists, so
 `reclaimPolicy: Delete` reclaims the EBS volumes), wait for zero cluster-tagged
 volumes, then destroy eks. KV-store content is disposable in dev; the source of

@@ -13,7 +13,7 @@ The power and checks workflows target the `eks` + `sok` layers (the persistent
 - **SOK START** applies `eks` then `sok`; passes the runner's egress IP as
   `eks_public_access_cidrs` (appended to `trusted_cidrs`) so the runner reaches
   the K8s API during the apply. ~20–25 min wall clock.
-- **SOK STOP** is a full **destroy** of `sok` then `eks`, the only route to ~$0
+- **SOK STOP** is a full **destroy** of `ep` (when applied), `sok` then `eks`, the only route to ~$0
   overnight, since an EKS control plane bills whether or not it's used. It
   reclaims PVC EBS volumes in order (namespace delete before cluster delete) and
   verifies no cluster/EBS/ELB remains. Nightly at **21:30 UTC** (dev). A **prod**
