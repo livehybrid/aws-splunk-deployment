@@ -55,6 +55,20 @@ data "aws_iam_policy_document" "vpce_s3_policy" {
     }
     resources = ["arn:aws:s3:::al2023-repos-${var.region}-*/*"]
   }
+  # The AI tier's model weights and artifacts (ai.tf). Ray and SAIA read and
+  # write through this endpoint; unlisted, every weight download is a 403.
+  dynamic "statement" {
+    for_each = var.ai_tier_enabled ? [1] : []
+    content {
+      sid     = "AllowAITierArtifacts"
+      actions = ["s3:*"]
+      principals {
+        identifiers = ["*"]
+        type        = "*"
+      }
+      resources = [aws_s3_bucket.ai[0].arn, "${aws_s3_bucket.ai[0].arn}/*"]
+    }
+  }
 }
 
 resource "aws_vpc_endpoint" "ep_s3" {

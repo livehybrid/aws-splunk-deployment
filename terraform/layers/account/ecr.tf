@@ -44,6 +44,15 @@ resource "aws_ecr_pull_through_cache_rule" "k8s_public" {
   # No credential_arn: K8s Public Gallery is unauthenticated for pull-through cache.
 }
 
+resource "aws_ecr_pull_through_cache_rule" "quay_public" {
+  count = var.use_ecr_pullthrough_cache ? 1 : 0
+
+  ecr_repository_prefix = "quay-public"
+  upstream_registry_url = "quay.io"
+  # No credential_arn: Quay public repositories are unauthenticated for
+  # pull-through cache. Serves cert-manager, KubeRay and the Prometheus stack.
+}
+
 resource "aws_ecr_pull_through_cache_rule" "docker_public" {
   count = var.use_ecr_pullthrough_cache ? 1 : 0
 
